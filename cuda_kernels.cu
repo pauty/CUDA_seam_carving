@@ -2,7 +2,7 @@
 
 extern "C"{
 #include <stdio.h>
-#include <math.h>
+//#include <math.h>
 #include <limits.h>
 #include "image.h"
 }
@@ -168,19 +168,19 @@ __global__ void min_reduce(unsigned int* d_values, int* d_indices, int N){
     __shared__ unsigned int ix_cache[REDUCEBLOCKSIZE];
     unsigned int tid = threadIdx.x;
     unsigned int coloumn = blockIdx.x*REDUCEBLOCKSIZE + ELEMENTS_PER_THREAD*threadIdx.x; 
-    unsigned int minv = UINT_MAX;
-    unsigned int mini = 0;
+    unsigned int min_v = UINT_MAX;
+    unsigned int min_i = 0;
     unsigned int i;
     for(i = 0; i < ELEMENTS_PER_THREAD && coloumn + i < N; i++){
-            unsigned int newi = d_indices[coloumn + i];
-            unsigned int newv  = d_values[newi];
-            if(newv < minv){
-                mini = newi;
-                minv = newv;
+            unsigned int new_i = d_indices[coloumn + i];
+            unsigned int new_v  = d_values[new_i];
+            if(new_v < min_v){
+                min_i = new_i;
+                min_v = new_v;
             }             
     }
-    val_cache[tid] = minv;
-    ix_cache[tid] = mini;
+    val_cache[tid] = min_v;
+    ix_cache[tid] = min_i;
     
     __syncthreads();
     
@@ -200,8 +200,44 @@ __global__ void min_reduce(unsigned int* d_values, int* d_indices, int N){
 }
 
 
-__global__ void find_seam(){
+__global__ void find_seam_kernel(unsigned int* d_M, int *d_indices, int *d_seam, int w, int h, int current_w){    
+    int row, mid;
+    int min_index = d_indices[0];
+    
+    d_seam[h-1] = min_index; 
+    for(row = h-2; row >= 0; row--){
+        mid = min_index;
+        if(mid != 0){
+            if(d_M[row*w + mid - 1] < d_M[row*w + min_index] )
+                min_index = mid - 1;
+        }
+        if(mid != current_w){
+            if(d_M[row*w + mid + 1] < d_M[row*w + min_index] )
+                min_index = mid + 1;
+        }
+        d_seam[row] = min_index;
+    }
 }
+
+
+const int SHIFTBLOCKSIZE = 32;
+
+__global__ void remove_seam_kernel(pixel *d_pixel, int *d_seam, int w, int h, int current_w){
+    int row = blockIdx.y*SHIFTBLOCKSIZE + threadIdx.y;
+    if(row < h){
+        int c;
+        for(c = d_seam[row]; c < current_w-1; c++)
+            d_pixel[row*w + c] = d_pixel[row*w + c + 1];
+    }
+
+}
+
+
+/*
+__global__ void update_costs(unsigned int* d_M, unsigned int* d_costs, unsigned int* d_seam, int w, int h, int current_w){
+    int row = blockIdx.y*SHIFTBLOCKSIZE + threadIdx.y;
+}
+*/
 
 /*
  //////SIMPLE ///////////
@@ -289,8 +325,10 @@ void compute_M(unsigned int *d_costs, unsigned int *d_M, int w, int h, int curre
     }
 }
 
-void find_min(unsigned int* d_M, int* d_indices, int w, int h, int current_w){
-
+void find_min(unsigned int *d_M, int *d_indices, int *d_indices_ref, int w, int h, int current_w){
+    //set the reference index array
+    cudaMemcpy(d_indices, d_indices_ref, current_w*sizeof(int), cudaMemcpyDeviceToDevice);
+    
     dim3 threads_per_block(REDUCEBLOCKSIZE, 1);   
 
     dim3 num_blocks;
@@ -300,6 +338,19 @@ void find_min(unsigned int* d_M, int* d_indices, int w, int h, int current_w){
         min_reduce<<<num_blocks, threads_per_block>>>(&(d_M[w*(h-1)]), d_indices, current_w); 
         current_w = num_blocks.x;
     }while(num_blocks.x > 1);
+}
+
+void find_seam(unsigned int* d_M, int *d_indices, int *d_seam, int w, int h, int current_w){
+    find_seam_kernel<<<1, 1>>>(d_M, d_indices, d_seam, w, h, current_w);
+}
+
+void remove_seam(pixel *d_pixel, int *d_seam, int w, int h, int current_w){
+    dim3 threads_per_block(1, SHIFTBLOCKSIZE);   
+
+    dim3 num_blocks;
+    num_blocks.x = 1;
+    num_blocks.y = (int)((h-1)/(threads_per_block.y)) + 1;
+    remove_seam_kernel<<<num_blocks, threads_per_block>>>(d_pixel, d_seam, w, h, current_w);
 }
 
 
