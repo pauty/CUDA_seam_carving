@@ -7,6 +7,8 @@ extern "C"{
 #include "image.h"
 }
 
+//#define COMPUTE_M_SINGLE
+
 const int BLOCKSIZE = 16;
 
 __global__ void compute_costs_kernel(pixel* d_pixels, unsigned int* d_costs, int w, int h, int current_w){
@@ -42,6 +44,26 @@ __global__ void compute_costs_kernel(pixel* d_pixels, unsigned int* d_costs, int
     if(active && cache_r != 0 && cache_c != 0 
         && cache_c != BLOCKSIZE-1 && coloumn < current_w){
         unsigned int rdiff, gdiff, bdiff;
+        unsigned int p_r, p_g, p_b;
+        
+        p_r = abs(pix_cache[cache_r][cache_c+1].r - pix_cache[cache_r][cache_c-1].r);
+        p_g = abs(pix_cache[cache_r][cache_c+1].g - pix_cache[cache_r][cache_c-1].g);
+        p_b = abs(pix_cache[cache_r][cache_c+1].b - pix_cache[cache_r][cache_c-1].b);
+        //calc left
+        rdiff = p_r + abs(pix_cache[cache_r-1][cache_c].r - pix_cache[cache_r][cache_c-1].r);
+        gdiff = p_g + abs(pix_cache[cache_r-1][cache_c].g - pix_cache[cache_r][cache_c-1].g);
+        bdiff = p_b + abs(pix_cache[cache_r-1][cache_c].b - pix_cache[cache_r][cache_c-1].b);
+        d_costs[ix] = rdiff + gdiff + bdiff;
+        //calc up
+        d_costs[ix + wh] = p_r + p_g + p_b;
+         //calc right
+        rdiff = p_r + abs(pix_cache[cache_r-1][cache_c].r - pix_cache[cache_r][cache_c+1].r);
+        gdiff = p_g + abs(pix_cache[cache_r-1][cache_c].g - pix_cache[cache_r][cache_c+1].g);
+        bdiff = p_b + abs(pix_cache[cache_r-1][cache_c].b - pix_cache[cache_r][cache_c+1].b);
+        d_costs[ix + 2*wh] = rdiff + gdiff + bdiff;
+        
+        
+        /*
         //calc left
         rdiff = abs(pix_cache[cache_r][cache_c+1].r - pix_cache[cache_r][cache_c-1].r) +
                 abs(pix_cache[cache_r-1][cache_c].r - pix_cache[cache_r][cache_c-1].r);
@@ -63,13 +85,16 @@ __global__ void compute_costs_kernel(pixel* d_pixels, unsigned int* d_costs, int
         bdiff = abs(pix_cache[cache_r][cache_c+1].b - pix_cache[cache_r][cache_c-1].b) +
                 abs(pix_cache[cache_r-1][cache_c].b - pix_cache[cache_r][cache_c+1].b);
         d_costs[ix + 2*wh] = rdiff + gdiff + bdiff;
+        */
     }
        
 }
 
+#ifndef COMPUTE_M_SINGLE
+
 const int WIDEBLOCKSIZE = 128; //must be divisible by 2
 
-__global__ void compute_M_kernel_phase1(unsigned int *d_costs, unsigned int* d_M, int w, int h, int current_w, int base_row){
+__global__ void compute_M_kernel_step1(unsigned int *d_costs, unsigned int* d_M, int w, int h, int current_w, int base_row){
     __shared__ unsigned int m_cache[WIDEBLOCKSIZE];
     unsigned int row;
     unsigned int coloumn = blockIdx.x*WIDEBLOCKSIZE + threadIdx.x; 
@@ -123,7 +148,7 @@ __global__ void compute_M_kernel_phase1(unsigned int *d_costs, unsigned int* d_M
 }
 
 
-__global__ void compute_M_kernel_phase2(unsigned int *d_costs, unsigned int* d_M, int w, int h, int current_w, int base_row){
+__global__ void compute_M_kernel_step2(unsigned int *d_costs, unsigned int* d_M, int w, int h, int current_w, int base_row){
     //__shared__ unsigned int m_cache[WIDEBLOCKSIZE];
     int row;
     int coloumn = blockIdx.x*WIDEBLOCKSIZE + threadIdx.x + WIDEBLOCKSIZE/2; 
@@ -161,8 +186,61 @@ __global__ void compute_M_kernel_phase2(unsigned int *d_costs, unsigned int* d_M
     }
 }
 
+#endif
+
+#ifdef COMPUTE_M_SINGLE
+
+__global__ void compute_M_kernel_single(unsigned int *d_costs, unsigned int* d_M, int w, int h, int current_w, int n_elem){
+    extern __shared__ unsigned int m_cache[];
+    int tid = threadIdx.x*n_elem;
+    int i, row, coloumn, ix;
+    int wh = w*h;
+    unsigned int left, up, right;
+    
+    //first row
+    for(i = 0; i < n_elem && tid + i < current_w; i++){
+        coloumn = tid + i;
+        left = min(d_costs[coloumn], min(d_costs[coloumn + wh], d_costs[coloumn + 2*wh]));
+        d_M[coloumn] = left; 
+        m_cache[coloumn] = left;
+    }
+    
+    __syncthreads(); 
+    
+    //other rows
+    for(row = 1; row < h; row++){
+        for(i = 0; i < n_elem && tid + i < current_w; i++){
+            coloumn = tid + i;
+            ix = row*w + coloumn;
+            //with left
+            if(coloumn > 0){
+                left = m_cache[coloumn - 1] + d_costs[ix]; 
+            }
+            else
+                left = UINT_MAX;
+            //with up
+            up = m_cache[coloumn] + d_costs[ix + wh];
+            //with right
+            if(coloumn < current_w-1){
+                right = m_cache[coloumn + 1] + d_costs[ix + 2*wh];
+            }
+            else
+                right = UINT_MAX;
+  
+            left = min(left, min(up, right));
+            d_M[ix] = left;
+            m_cache[coloumn] = left;
+        }
+        __syncthreads();
+    }
+        
+}
+
+#endif
+
 const int REDUCEBLOCKSIZE = 128;
 const int ELEMENTS_PER_THREAD = 8;
+
 __global__ void min_reduce(unsigned int* d_values, int* d_indices, int N){
     __shared__ unsigned int val_cache[REDUCEBLOCKSIZE];
     __shared__ unsigned int ix_cache[REDUCEBLOCKSIZE];
@@ -220,63 +298,24 @@ __global__ void find_seam_kernel(unsigned int* d_M, int *d_indices, int *d_seam,
 }
 
 
-const int SHIFTBLOCKSIZE = 32;
-
-__global__ void remove_seam_kernel(pixel *d_pixel, int *d_seam, int w, int h, int current_w){
-    int row = blockIdx.y*SHIFTBLOCKSIZE + threadIdx.y;
-    if(row < h){
-        int c;
-        for(c = d_seam[row]; c < current_w-1; c++)
-            d_pixel[row*w + c] = d_pixel[row*w + c + 1];
+__global__ void remove_seam_kernel_step1(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
+    int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
+    int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
+    int seam_r = d_seam[row];
+    if(row < h && coloumn < current_w-1 && coloumn >= seam_r){
+        d_pixels_tmp[row*w + coloumn] = d_pixels[row*w + coloumn + 1];
     }
-
 }
 
-
-/*
-__global__ void update_costs(unsigned int* d_M, unsigned int* d_costs, unsigned int* d_seam, int w, int h, int current_w){
-    int row = blockIdx.y*SHIFTBLOCKSIZE + threadIdx.y;
-}
-*/
-
-/*
- //////SIMPLE ///////////
- 
-__global__ void compute_M_kernel(unsigned int *d_costs, unsigned int* d_M, int w, int h, int current_w, int row){
-    //__shared__ unsigned int m_cache[WIDEBLOCKSIZE];
-    int coloumn = blockIdx.x*WIDEBLOCKSIZE + threadIdx.x;   
-    
-    //__syncthreads();
-    
-    unsigned int left, up, right;
-    if(coloumn < current_w){
-        //with left
-            if(coloumn > 0)
-                left = d_costs[(row-1)*w + coloumn -1] + d_costs[row*w + coloumn]; 
-            else 
-                left = UINT_MAX;
-            //with up
-            up = d_costs[(row-1)*w + coloumn] + d_costs[row*w + coloumn + w*h];
-            //with right
-            if(coloumn < current_w-1)
-                right = d_costs[(row-1)*w + coloumn +1] + d_costs[row*w + coloumn + 2*w*h];
-            else
-                right = UINT_MAX;
-                
-            d_M[row*w + coloumn] = min(left, min(up, right));         
-    } 
+__global__ void remove_seam_kernel_step2(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
+    int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
+    int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
+    int seam_r = d_seam[row];
+    if(row < h && coloumn < current_w-1 && coloumn >= seam_r){
+        d_pixels[row*w + coloumn] = d_pixels_tmp[row*w + coloumn];
+    }
 }
 
-//only for row 0
-__global__ void compute_M_kernel_init(unsigned int *d_costs, int w, int h, int current_w){
-    int coloumn = blockIdx.x*WIDEBLOCKSIZE + threadIdx.x;
-    if(coloumn < current_w)
-        d_M[coloumn] = min(d_costs[coloumn], min(d_costs[coloumn + w*h], d_costs[coloumn + 2*w*h]));
-
-}
-
-///////////////END SIMPLE //////////
-*/
 
 /*wrappers */
 extern "C"{
@@ -290,6 +329,7 @@ void compute_costs(pixel *d_pixels, unsigned int *d_costs, int w, int h, int cur
     compute_costs_kernel<<<num_blocks, threads_per_block>>>(d_pixels, d_costs, w, h, current_w);
 }
 
+#ifndef COMPUTE_M_SINGLE
 
 void compute_M(unsigned int *d_costs, unsigned int *d_M, int w, int h, int current_w){
     dim3 threads_per_block(WIDEBLOCKSIZE, 1);
@@ -318,12 +358,28 @@ void compute_M(unsigned int *d_costs, unsigned int *d_M, int w, int h, int curre
         int i;
         int base_row = 0;
         for(i = 0; i < num_iterations; i++){
-            compute_M_kernel_phase1<<<num_blocks, threads_per_block>>>(d_costs, d_M, w, h, current_w, base_row);
-            compute_M_kernel_phase2<<<num_blocks2, threads_per_block>>>(d_costs, d_M, w, h, current_w, base_row);
+            compute_M_kernel_step1<<<num_blocks, threads_per_block>>>(d_costs, d_M, w, h, current_w, base_row);
+            compute_M_kernel_step2<<<num_blocks2, threads_per_block>>>(d_costs, d_M, w, h, current_w, base_row);
             base_row = base_row + (WIDEBLOCKSIZE/2) - 1;    
         }
     }
 }
+
+#endif
+
+#ifdef COMPUTE_M_SINGLE
+void compute_M(unsigned int *d_costs, unsigned int *d_M, int w, int h, int current_w){
+
+    dim3 threads_per_block(1024, 1);   
+    dim3 num_blocks(1,1);
+    
+    int num_el = (int)((current_w-1)/threads_per_block.x) + 1;
+    
+    compute_M_kernel_single<<<num_blocks, threads_per_block, current_w*sizeof(unsigned int)>>>(d_costs, d_M, w, h, current_w, num_el);
+}
+
+
+#endif
 
 void find_min(unsigned int *d_M, int *d_indices, int *d_indices_ref, int w, int h, int current_w){
     //set the reference index array
@@ -344,33 +400,16 @@ void find_seam(unsigned int* d_M, int *d_indices, int *d_seam, int w, int h, int
     find_seam_kernel<<<1, 1>>>(d_M, d_indices, d_seam, w, h, current_w);
 }
 
-void remove_seam(pixel *d_pixel, int *d_seam, int w, int h, int current_w){
-    dim3 threads_per_block(1, SHIFTBLOCKSIZE);   
 
-    dim3 num_blocks;
-    num_blocks.x = 1;
-    num_blocks.y = (int)((h-1)/(threads_per_block.y)) + 1;
-    remove_seam_kernel<<<num_blocks, threads_per_block>>>(d_pixel, d_seam, w, h, current_w);
+void remove_seam(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
+    dim3 threads_per_block(BLOCKSIZE, BLOCKSIZE);
+    int nblocks_x, nblocks_y;
+    nblocks_x = (int)((current_w-1)/(threads_per_block.x)) + 1;
+    nblocks_y = (int)((h-1)/(threads_per_block.y)) + 1;    
+    dim3 num_blocks(nblocks_x, nblocks_y);
+    remove_seam_kernel_step1<<<num_blocks, threads_per_block>>>(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
+    remove_seam_kernel_step2<<<num_blocks, threads_per_block>>>(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
 }
-
-
-/*
-
-/////////////SIMPLE ///////////////////////
-
-
-void compute_M(unsigned int *d_costs, unsigned int *d_M, int w, int h, int current_w){
-    dim3 threads_per_block(WIDEBLOCKSIZE, 1);
-    int nblocks_x;
-    nblocks_x = (int)((current_w-1)/(threads_per_block.x)) + 1;    
-    dim3 num_blocks(nblocks_x, 1);
-    compute_M_kernel_init<<<num_blocks, threads_per_block>>>(d_costs, d_M, w, h, current_w);
-    int row;
-    for(row = 1; row < h; row++)
-        compute_M_kernel<<<num_blocks, threads_per_block>>>(d_costs, d_M, w, h, current_w, row);
-}
-
-*/
 
 
 }

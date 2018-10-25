@@ -59,10 +59,12 @@ int main(int argc, char **argv) {
     unsigned char *imgv = NULL;
     pixel *pixels = NULL;
     pixel *d_pixels;
+    pixel *d_pixels_tmp;
     unsigned int *d_costs;
     unsigned int *costs;
     unsigned int *M;
     unsigned int *d_M;
+
    
     int *indices_ref;
     int *d_indices_ref;
@@ -71,15 +73,17 @@ int main(int argc, char **argv) {
     int *d_seam;
     int *seam;
      
-    imgv = stbi_load("imgs/coast.bmp", &w, &h, &ncomp, 0);
+    imgv = stbi_load("imgs/beach.bmp", &w, &h, &ncomp, 0);
     if(ncomp != 3)
         printf("ERROR -- image does not have 3 components (RGB)\n");
     pixels = build_pixels(imgv, w, h);
     free(imgv);
 
     cudaMalloc((void**)&d_pixels, w*h*sizeof(pixel)); 
+    cudaMalloc((void**)&d_pixels_tmp, w*h*sizeof(pixel)); 
     cudaMalloc((void**)&d_costs, 3*w*h*sizeof(unsigned int)); 
     cudaMalloc((void**)&d_M, w*h*sizeof(unsigned int)); 
+
     //alloc on device for indices
     cudaMalloc((void**)&d_indices, w*sizeof(int)); 
     cudaMalloc((void**)&d_indices_ref, w*sizeof(int)); 
@@ -100,7 +104,7 @@ int main(int argc, char **argv) {
     
     //here start the loop
     int current_w = w;
-    while(current_w > w - 220){
+    while(current_w > w - 1500){
         
         //call the kernel to calculate all costs 
         compute_costs(d_pixels, d_costs, w, h, current_w);
@@ -116,7 +120,7 @@ int main(int argc, char **argv) {
         find_seam(d_M, d_indices, d_seam, w, h, current_w);
         
         //remove seam
-        remove_seam(d_pixels, d_seam, w, h, current_w);
+        remove_seam(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
 
         
         //update costs matrix near removed seam
@@ -156,8 +160,10 @@ int main(int argc, char **argv) {
     cudaFree(d_pixels);
     cudaFree(d_costs);
     cudaFree(d_M); 
+    cudaFree(d_pixels_tmp);
     cudaFree(d_indices); 
     cudaFree(d_indices_ref); 
+    cudaFree(d_seam);
     //free(M);
     free(pixels);
     free(indices_ref);
