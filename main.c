@@ -104,13 +104,13 @@ int main(int argc, char **argv) {
     
     //here start the loop
     int current_w = w;
-    while(current_w > w - 1500){
+    while(current_w > w - 200){
         
         //call the kernel to calculate all costs 
         compute_costs(d_pixels, d_costs, w, h, current_w);
         
         //call the kernel to compute comulative map
-        compute_M(d_costs, d_M, w, h, w);
+        compute_M(d_costs, d_M, w, h, current_w);
         
         //call the kernel to find min
         find_min(d_M, d_indices, d_indices_ref, w, h, current_w);
@@ -167,5 +167,6 @@ int main(int argc, char **argv) {
     //free(M);
     free(pixels);
     free(indices_ref);
+    free(output);
 
 }
