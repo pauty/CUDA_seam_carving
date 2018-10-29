@@ -72,6 +72,8 @@ int main(int argc, char **argv) {
     
     int *d_seam;
     int *seam;
+    
+    int i;
      
     imgv = stbi_load("imgs/beach.bmp", &w, &h, &ncomp, 0);
     if(ncomp != 3)
@@ -92,7 +94,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_pixels, pixels, w*h*sizeof(pixel), cudaMemcpyHostToDevice);    
    
     
-    //M = (unsigned int*)malloc(w*h*sizeof(unsigned int)); //TO REMOVE
+    M = (unsigned int*)malloc(w*h*sizeof(unsigned int)); //TO REMOVE
     
     indices_ref = (int*)malloc(w*sizeof(int));
     for(int i = 0; i < w; i++)
@@ -100,10 +102,11 @@ int main(int argc, char **argv) {
         
     cudaMemcpy(d_indices_ref, indices_ref, w*sizeof(int), cudaMemcpyHostToDevice);
     
-    //seam = (int*)malloc(h*sizeof(int));
+    seam = (int*)malloc(h*sizeof(int));
     
     //here start the loop
     int current_w = w;
+    //int row = h-1;
     while(current_w > w - 200){
         
         //call the kernel to calculate all costs 
@@ -112,12 +115,31 @@ int main(int argc, char **argv) {
         //call the kernel to compute comulative map
         compute_M(d_costs, d_M, w, h, current_w);
         
+        //cudaMemcpy(M, d_M, w*h*sizeof(unsigned int), cudaMemcpyDeviceToHost);
+        
+        /*
+        for(i = (row)*w; i < (row+1)*w; i++)
+            printf("%d \n", M[i]);
+        getchar();
+        */
+        
+        
+        
         //call the kernel to find min
         find_min(d_M, d_indices, d_indices_ref, w, h, current_w);
         
         
         //kernel to find the seam
         find_seam(d_M, d_indices, d_seam, w, h, current_w);
+        
+        //cudaMemcpy(seam, d_seam, h*sizeof(pixel), cudaMemcpyDeviceToHost);
+        
+        
+        /*
+        for(i = 0; i < h; i++)
+            printf("%d \n", seam[i]);
+        getchar();
+        */
         
         //remove seam
         remove_seam(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
@@ -140,7 +162,6 @@ int main(int argc, char **argv) {
             printf("\n");
         printf("%d ",costs[i]);
     }*/
-    int i;
     for(i = 260; i < w*h; i = i+w){
         printf("[ %d %d % d ] \n",pixels[i].r, pixels[i].g, pixels[i].b);
     }

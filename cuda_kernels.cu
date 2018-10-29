@@ -353,7 +353,7 @@ void compute_M(unsigned int *d_costs, unsigned int *d_M, int w, int h, int curre
         //printf("%d \n\n",num_blocks2.x);
         
         int num_iterations;
-        num_iterations = (int)((h-1)/(WIDEBLOCKSIZE/2)) + 1;
+        num_iterations = (int)((h-1)/(WIDEBLOCKSIZE/2 - 1)) + 1;
             
         int i;
         int base_row = 0;
