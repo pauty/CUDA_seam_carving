@@ -60,10 +60,10 @@ int main(int argc, char **argv) {
     pixel *pixels = NULL;
     pixel *d_pixels;
     pixel *d_pixels_tmp;
-    unsigned int *d_costs;
-    unsigned int *costs;
-    unsigned int *M;
-    unsigned int *d_M;
+    int *d_costs;
+    int *costs;
+    int *M;
+    int *d_M;
 
    
     int *indices_ref;
@@ -83,8 +83,8 @@ int main(int argc, char **argv) {
 
     cudaMalloc((void**)&d_pixels, w*h*sizeof(pixel)); 
     cudaMalloc((void**)&d_pixels_tmp, w*h*sizeof(pixel)); 
-    cudaMalloc((void**)&d_costs, 3*w*h*sizeof(unsigned int)); 
-    cudaMalloc((void**)&d_M, w*h*sizeof(unsigned int)); 
+    cudaMalloc((void**)&d_costs, 3*w*h*sizeof(int)); 
+    cudaMalloc((void**)&d_M, w*h*sizeof(int)); 
 
     //alloc on device for indices
     cudaMalloc((void**)&d_indices, w*sizeof(int)); 
@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_pixels, pixels, w*h*sizeof(pixel), cudaMemcpyHostToDevice);    
    
     
-    M = (unsigned int*)malloc(w*h*sizeof(unsigned int)); //TO REMOVE
+    //M = (int*)malloc(w*h*sizeof(int)); //TO REMOVE
     
     indices_ref = (int*)malloc(w*sizeof(int));
     for(int i = 0; i < w; i++)
@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
         
     cudaMemcpy(d_indices_ref, indices_ref, w*sizeof(int), cudaMemcpyHostToDevice);
     
-    seam = (int*)malloc(h*sizeof(int));
+    //seam = (int*)malloc(h*sizeof(int)); //TO REMOVE 
     
     //here start the loop
     int current_w = w;
@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
         //call the kernel to compute comulative map
         compute_M(d_costs, d_M, w, h, current_w);
         
-        //cudaMemcpy(M, d_M, w*h*sizeof(unsigned int), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(M, d_M, w*h*sizeof(int), cudaMemcpyDeviceToHost);
         
         /*
         for(i = (row)*w; i < (row+1)*w; i++)
@@ -162,9 +162,11 @@ int main(int argc, char **argv) {
             printf("\n");
         printf("%d ",costs[i]);
     }*/
+    
+    /*
     for(i = 260; i < w*h; i = i+w){
         printf("[ %d %d % d ] \n",pixels[i].r, pixels[i].g, pixels[i].b);
-    }
+    }*/
     
     /*
     printf("\n\n -------- \n");
