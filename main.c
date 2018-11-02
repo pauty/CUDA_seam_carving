@@ -176,7 +176,7 @@ int main(int argc, char **argv) {
     }*/
     
     unsigned char *output = flatten_pixels(pixels, w, h, current_w);
-    int success = stbi_write_bmp("output.bmp", current_w, h, 3, output);
+    int success = stbi_write_bmp("img2.bmp", current_w, h, 3, output);
     
     printf("success : %d ",success);
     
