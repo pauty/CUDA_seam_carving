@@ -1,6 +1,6 @@
 // System includes
 #include <stdio.h>
-#include <assert.h>
+//#include <assert.h>
 #include <stdlib.h>
 
 // CUDA runtime
@@ -13,7 +13,6 @@
 */
 
 #include "image.h"
-
 
 #include "cuda_kernels.h"
 //#define STBI_ONLY_BMP
@@ -29,26 +28,20 @@ pixel *build_pixels(const unsigned char *imgv, int w, int h){
         for(j = 0; j < w; j++){
             pixels[i*w + j].r = imgv[i*3*w + 3*j];
             pixels[i*w + j].g = imgv[i*3*w + 3*j + 1];
-            pixels[i*w + j].b = imgv[i*3*w + 3*j + 2];
-            //pixels[i*w + j].a = (unsigned char)255;
-            //printf("%d %d %d; ",pixels[i*w + j].r,pixels[i*w + j].g,pixels[i*w + j].b);
+            pixels[i*w + j].b = imgv[i*3*w + 3*j + 2]; 
         }
-        //printf("endrow\n");
     }
-    //printf("END------\n\n");
     return pixels;
 }
 
 unsigned char *flatten_pixels(pixel *pixels, int w, int h, int new_w){
-    unsigned char * flattened = (unsigned char*)malloc(3*new_w*h*sizeof(unsigned char));
+    unsigned char *flattened = (unsigned char*)malloc(3*new_w*h*sizeof(unsigned char));
     int i, j;
     for(i = 0; i < h; i++){
         for(j = 0; j < new_w; j++){           
             flattened[3*i*new_w + 3*j] = pixels[i*w + j].r;
             flattened[3*i*new_w + 3*j + 1] = pixels[i*w + j].g;
             flattened[3*i*new_w + 3*j + 2] = pixels[i*w + j].b;
-            //pixels[i*w + j].a = (unsigned char)255;
-            //printf("%d %d %d; ",pixels[i*w + j].r,pixels[i*w + j].g,pixels[i*w + j].b);
         }
     }
     return flattened;
@@ -64,7 +57,6 @@ int main(int argc, char **argv) {
     int *costs;
     int *M;
     int *d_M;
-
    
     int *indices_ref;
     int *d_indices_ref;
@@ -75,7 +67,7 @@ int main(int argc, char **argv) {
     
     int i;
      
-    imgv = stbi_load("imgs/beach.bmp", &w, &h, &ncomp, 0);
+    imgv = stbi_load("imgs/coast.bmp", &w, &h, &ncomp, 0);
     if(ncomp != 3)
         printf("ERROR -- image does not have 3 components (RGB)\n");
     pixels = build_pixels(imgv, w, h);
@@ -91,23 +83,15 @@ int main(int argc, char **argv) {
     cudaMalloc((void**)&d_indices_ref, w*sizeof(int)); 
     cudaMalloc((void**)&d_seam, h*sizeof(int)); 
     
+    //copy image pixels from host to device 
     cudaMemcpy(d_pixels, pixels, w*h*sizeof(pixel), cudaMemcpyHostToDevice);    
-   
-    
+       
     //M = (int*)malloc(w*h*sizeof(int)); //TO REMOVE
-    
-    indices_ref = (int*)malloc(w*sizeof(int));
-    for(int i = 0; i < w; i++)
-        indices_ref[i] = i;
-        
-    cudaMemcpy(d_indices_ref, indices_ref, w*sizeof(int), cudaMemcpyHostToDevice);
-    
     //seam = (int*)malloc(h*sizeof(int)); //TO REMOVE 
     
-    //here start the loop
     int current_w = w;
-    //int row = h-1;
-    while(current_w > w - 200){
+    int num_iterations = 0;
+    while(num_iterations < 200){
         
         //call the kernel to calculate all costs 
         compute_costs(d_pixels, d_costs, w, h, current_w);
@@ -123,13 +107,20 @@ int main(int argc, char **argv) {
         getchar();
         */
         
-        
-        
-        //call the kernel to find min
+        //only on the first iteration, initialize indices reference (in parallel with kernel execution)
+        if(num_iterations == 0){
+            indices_ref = (int*)malloc(w*sizeof(int));
+            for(int i = 0; i < w; i++)
+                indices_ref[i] = i;
+            //wait for previous kernel to finish, copy reference to device   
+            cudaMemcpy(d_indices_ref, indices_ref, w*sizeof(int), cudaMemcpyHostToDevice);
+        }
+               
+        //call the kernel to find min index in the last row of M
         find_min(d_M, d_indices, d_indices_ref, w, h, current_w);
         
         
-        //kernel to find the seam
+        //call the kernel to find the seam
         find_seam(d_M, d_indices, d_seam, w, h, current_w);
         
         //cudaMemcpy(seam, d_seam, h*sizeof(pixel), cudaMemcpyDeviceToHost);
@@ -138,22 +129,19 @@ int main(int argc, char **argv) {
         /*
         for(i = 0; i < h; i++)
             printf("%d \n", seam[i]);
-        getchar();
-        */
+        getchar();*/
         
-        //remove seam
+        
+        //call the kernel to remove seam
         remove_seam(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
-
-        
-        //update costs matrix near removed seam
-        
-        //end loop - decrease current w
+      
+        //decrease current w
         current_w = current_w - 1;
+        num_iterations = num_iterations + 1;
     }
     
-    
+    //copy new pixel values back to the host
     cudaMemcpy(pixels, d_pixels, w*h*sizeof(pixel), cudaMemcpyDeviceToHost);
-    //cudaMemcpy(seam, d_seam, h*sizeof(int), cudaMemcpyDeviceToHost);
     
     /*
     int i;
@@ -178,12 +166,12 @@ int main(int argc, char **argv) {
     unsigned char *output = flatten_pixels(pixels, w, h, current_w);
     int success = stbi_write_bmp("img2.bmp", current_w, h, 3, output);
     
-    printf("success : %d ",success);
+    printf("success : %d \n",success);
     
     cudaFree(d_pixels);
+    cudaFree(d_pixels_tmp);
     cudaFree(d_costs);
     cudaFree(d_M); 
-    cudaFree(d_pixels_tmp);
     cudaFree(d_indices); 
     cudaFree(d_indices_ref); 
     cudaFree(d_seam);

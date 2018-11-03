@@ -1,7 +1,8 @@
 //#include <cuda_runtime.h>
 
 extern "C"{
-//#include <stdio.h>
+#include <stdio.h>
+#include <stdlib.h>
 //#include <math.h>
 #include <limits.h>
 #include "image.h"
@@ -422,16 +423,14 @@ __global__ void compute_M_kernel_single(int *d_costs, int* d_M, int w, int h, in
 
 #endif
 
-const int REDUCEBLOCKSIZE = 128;
-const int REDUCE_ELEMENTS_PER_THREAD = 8;
+const int REDUCEBLOCKSIZE = 64;
+const int REDUCE_ELEMENTS_PER_THREAD = 16;
 
-
-/*
 __global__ void min_reduce(int* d_values, int* d_indices, int N){
     __shared__ int val_cache[REDUCEBLOCKSIZE];
     __shared__ int ix_cache[REDUCEBLOCKSIZE];
     int tid = threadIdx.x;
-    int coloumn = blockIdx.x*REDUCEBLOCKSIZE + REDUCE_ELEMENTS_PER_THREAD*threadIdx.x; 
+    int coloumn = blockIdx.x*REDUCEBLOCKSIZE*REDUCE_ELEMENTS_PER_THREAD + REDUCE_ELEMENTS_PER_THREAD*threadIdx.x; 
     int min_v = INT_MAX;
     int min_i = 0;
     int new_i, new_v;
@@ -451,7 +450,7 @@ __global__ void min_reduce(int* d_values, int* d_indices, int N){
     
     for(i = REDUCEBLOCKSIZE/2; i > 0; i = i/2){
         if(tid < i){
-            if(val_cache[tid] > val_cache[tid + i]){
+            if(val_cache[tid + i] < val_cache[tid] || (val_cache[tid + i] == val_cache[tid] && ix_cache[tid + i] < ix_cache[tid])){
                 val_cache[tid] = val_cache[tid + i];
                 ix_cache[tid] = ix_cache[tid + i];
             }
@@ -463,7 +462,6 @@ __global__ void min_reduce(int* d_values, int* d_indices, int N){
         d_indices[blockIdx.x] = ix_cache[0];   
    
 }
-*/
 
 __global__ void find_min_kernel(int *d_M, int *d_indices, int w, int h, int current_w){
     int base_ix = w*(h-1);
@@ -602,29 +600,46 @@ void compute_M(int *d_costs, int *d_M, int w, int h, int current_w){
 
 #endif
 
-/*
+
 void find_min(int *d_M, int *d_indices, int *d_indices_ref, int w, int h, int current_w){
     //set the reference index array
-    cudaMemcpy(d_indices, d_indices_ref, current_w*sizeof(int), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(d_indices, d_indices_ref, w*sizeof(int), cudaMemcpyDeviceToDevice);
     
     dim3 threads_per_block(REDUCEBLOCKSIZE, 1);   
+    
+    //int *ixs =(int*)malloc(w*sizeof(int));
 
     dim3 num_blocks;
     num_blocks.y = 1; 
+    int reduce_num_elements = current_w;
     do{
-        num_blocks.x = (int)((current_w-1)/(threads_per_block.x*REDUCE_ELEMENTS_PER_THREAD)) + 1;
-        min_reduce<<<num_blocks, threads_per_block>>>(&(d_M[w*(h-1)]), d_indices, current_w); 
-        current_w = num_blocks.x;
+        num_blocks.x = (int)((reduce_num_elements-1)/(threads_per_block.x*REDUCE_ELEMENTS_PER_THREAD)) + 1;
+        min_reduce<<<num_blocks, threads_per_block>>>(&(d_M[w*(h-1)]), d_indices, reduce_num_elements); 
+        reduce_num_elements = num_blocks.x;
+        
+        /*
+        cudaMemcpy(ixs, d_indices, current_w*sizeof(int), cudaMemcpyDeviceToHost);
+        printf("-----------------------------------------\n");
+        for(int i = 0; i < 20; i++)
+            printf("%d \n", ixs[i]);
+        getchar();
+        printf("-------------------\n");*/
+            
     }while(num_blocks.x > 1);
-}*/
+    
+      
+    //free(ixs);
+    
+}
 
 void find_seam(int* d_M, int *d_indices, int *d_seam, int w, int h, int current_w){
     find_seam_kernel<<<1, 1>>>(d_M, d_indices, d_seam, w, h, current_w);
 }
 
+/*
 void find_min(int *d_M, int *d_indices, int *d_indices_ref, int w, int h, int current_w){
     find_min_kernel<<<1,1>>>(d_M, d_indices, w, h, current_w);
-}
+}*/
 
 
 void remove_seam(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
