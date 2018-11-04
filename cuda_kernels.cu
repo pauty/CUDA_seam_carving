@@ -113,9 +113,9 @@ __global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h
             else
                 pix_cache[cache_r][0] = d_pixels[ix-1];
         }
-        else if(threadIdx.x == BLOCKSIZE-1 || coloumn == current_w-1){
+        if(threadIdx.x == BLOCKSIZE-1 || coloumn == current_w-1){
             if(coloumn == current_w-1)
-                pix_cache[cache_r][BLOCKSIZE+1] = BORDER_PIXEL;
+                pix_cache[cache_r][cache_c+1] = BORDER_PIXEL;
             else
                 pix_cache[cache_r][BLOCKSIZE+1] = d_pixels[ix+1];
         }

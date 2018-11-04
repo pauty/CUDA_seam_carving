@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
     
     int current_w = w;
     int num_iterations = 0;
-    while(num_iterations < 200){
+    while(num_iterations < 1500){
         
         
         //call the kernel to calculate all costs 
