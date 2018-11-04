@@ -54,6 +54,7 @@ int main(int argc, char **argv) {
     pixel *d_pixels;
     pixel *d_pixels_tmp;
     int *d_costs;
+    int *d_costs_tmp;
     int *costs;
     int *M;
     int *d_M;
@@ -67,7 +68,7 @@ int main(int argc, char **argv) {
     
     int i;
      
-    imgv = stbi_load("imgs/coast.bmp", &w, &h, &ncomp, 0);
+    imgv = stbi_load("imgs/beach.bmp", &w, &h, &ncomp, 0);
     if(ncomp != 3)
         printf("ERROR -- image does not have 3 components (RGB)\n");
     pixels = build_pixels(imgv, w, h);
@@ -76,6 +77,7 @@ int main(int argc, char **argv) {
     cudaMalloc((void**)&d_pixels, w*h*sizeof(pixel)); 
     cudaMalloc((void**)&d_pixels_tmp, w*h*sizeof(pixel)); 
     cudaMalloc((void**)&d_costs, 3*w*h*sizeof(int)); 
+    cudaMalloc((void**)&d_costs_tmp, 3*w*h*sizeof(int));  /////////////////////
     cudaMalloc((void**)&d_M, w*h*sizeof(int)); 
 
     //alloc on device for indices
@@ -89,12 +91,17 @@ int main(int argc, char **argv) {
     //M = (int*)malloc(w*h*sizeof(int)); //TO REMOVE
     //seam = (int*)malloc(h*sizeof(int)); //TO REMOVE 
     
+    //call the kernel to calculate all costs 
+    //compute_costs(d_pixels, d_costs, w, h, w);
+    
     int current_w = w;
     int num_iterations = 0;
     while(num_iterations < 200){
         
+        
         //call the kernel to calculate all costs 
         compute_costs(d_pixels, d_costs, w, h, current_w);
+        
         
         //call the kernel to compute comulative map
         compute_M(d_costs, d_M, w, h, current_w);
@@ -134,6 +141,8 @@ int main(int argc, char **argv) {
         
         //call the kernel to remove seam
         remove_seam(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
+        
+        //update_costs(d_pixels, d_costs, d_costs_tmp, d_seam, w, h, current_w);
       
         //decrease current w
         current_w = current_w - 1;

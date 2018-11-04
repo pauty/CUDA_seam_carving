@@ -423,8 +423,8 @@ __global__ void compute_M_kernel_single(int *d_costs, int* d_M, int w, int h, in
 
 #endif
 
-const int REDUCEBLOCKSIZE = 64;
-const int REDUCE_ELEMENTS_PER_THREAD = 16;
+const int REDUCEBLOCKSIZE = 128;
+const int REDUCE_ELEMENTS_PER_THREAD = 8;
 
 __global__ void min_reduce(int* d_values, int* d_indices, int N){
     __shared__ int val_cache[REDUCEBLOCKSIZE];
@@ -463,6 +463,7 @@ __global__ void min_reduce(int* d_values, int* d_indices, int N){
    
 }
 
+/* SEQUENTIAL MIN SEARCH
 __global__ void find_min_kernel(int *d_M, int *d_indices, int w, int h, int current_w){
     int base_ix = w*(h-1);
     int min_i = 0;
@@ -473,7 +474,7 @@ __global__ void find_min_kernel(int *d_M, int *d_indices, int w, int h, int curr
     }
     d_indices[0] = min_i;
 }
-
+*/
 
 __global__ void find_seam_kernel(int *d_M, int *d_indices, int *d_seam, int w, int h, int current_w){    
     int row, mid;
@@ -498,18 +499,88 @@ __global__ void find_seam_kernel(int *d_M, int *d_indices, int *d_seam, int w, i
 __global__ void remove_seam_kernel_step1(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
     int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
     int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
-    int seam_r = d_seam[row];
-    if(row < h && coloumn < current_w-1 && coloumn >= seam_r){
-        d_pixels_tmp[row*w + coloumn] = d_pixels[row*w + coloumn + 1];
+    int seam_c = d_seam[row];
+    int ix = row*w + coloumn;
+    if(row < h && coloumn < current_w-1 && coloumn >= seam_c){
+        d_pixels_tmp[ix] = d_pixels[ix + 1];
     }
 }
 
 __global__ void remove_seam_kernel_step2(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
     int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
     int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
-    int seam_r = d_seam[row];
-    if(row < h && coloumn < current_w-1 && coloumn >= seam_r){
-        d_pixels[row*w + coloumn] = d_pixels_tmp[row*w + coloumn];
+    int seam_c = d_seam[row];
+    int ix = row*w + coloumn;
+    if(row < h && coloumn < current_w-1 && coloumn >= seam_c){
+        d_pixels[ix] = d_pixels_tmp[ix];
+    }
+}
+
+__global__ void update_costs_kernel_step1(pixel *pixels, int *d_costs, int *d_costs_tmp, int *d_seam, int w, int h, int current_w){
+    int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
+    int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
+    int seam_c = d_seam[row];
+    int wh = w*h;
+    int ix = row*w + coloumn;
+    if(row < h && coloumn < current_w-1){
+        if(coloumn >= seam_c-2 && coloumn <= seam_c+1){
+            pixel pix1, pix2, pix3;
+            int p_r, p_g, p_b;
+            int rdiff, gdiff, bdiff;          
+            
+            if(coloumn == current_w-2) 
+                pix1 = BORDER_PIXEL;
+            else
+                pix1 = pixels[ix + 1];
+            if(coloumn == 0)
+                pix2 = BORDER_PIXEL;
+            else
+                pix2 = pixels[ix - 1];
+            if(row == 0)
+                pix3 = BORDER_PIXEL;
+            else
+                pix3 = pixels[ix - w];
+                
+            //compute partials
+            p_r = abs(pix1.r - pix2.r);
+            p_g = abs(pix1.g - pix2.g);
+            p_b = abs(pix1.b - pix2.b);
+            
+            //compute left cost       
+            rdiff = p_r + abs(pix3.r - pix2.r);
+            gdiff = p_g + abs(pix3.g - pix2.g);
+            bdiff = p_b + abs(pix3.b - pix2.b);
+            d_costs_tmp[ix] = rdiff + gdiff + bdiff;
+            
+            //compute up cost
+            d_costs_tmp[ix + wh] = p_r + p_g + p_b;
+            
+            //compute right cost
+            rdiff = p_r + abs(pix3.r - pix1.r);
+            gdiff = p_g + abs(pix3.g - pix1.g);
+            bdiff = p_b + abs(pix3.b - pix1.b);
+            d_costs_tmp[ix + 2*wh] = rdiff + gdiff + bdiff;
+            
+        }
+        else if(coloumn > seam_c+1){
+            //shift costs to the left
+            d_costs_tmp[ix] = d_costs[ix + 1];
+            d_costs_tmp[ix + wh] = d_costs[ix + 1 + wh];
+            d_costs_tmp[ix + 2*wh] = d_costs[ix + 1 + 2*wh];
+        }
+    }
+}
+
+__global__ void update_costs_kernel_step2(int *d_costs, int *d_costs_tmp, int *d_seam, int w, int h, int current_w){
+    int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
+    int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
+    int seam_c = d_seam[row];
+    int wh = w*h;
+    int ix = row*w + coloumn;
+    if(row < h && coloumn < current_w-1 && coloumn >= seam_c-2){
+        d_costs[ix] = d_costs_tmp[ix];
+        d_costs[ix + wh] = d_costs_tmp[ix + wh];
+        d_costs[ix + 2*wh] = d_costs_tmp[ix + 2*wh];
     }
 }
 
@@ -603,11 +674,9 @@ void compute_M(int *d_costs, int *d_M, int w, int h, int current_w){
 
 void find_min(int *d_M, int *d_indices, int *d_indices_ref, int w, int h, int current_w){
     //set the reference index array
-    cudaMemcpy(d_indices, d_indices_ref, w*sizeof(int), cudaMemcpyDeviceToDevice);
+    cudaMemcpy(d_indices, d_indices_ref, current_w*sizeof(int), cudaMemcpyDeviceToDevice);
     
     dim3 threads_per_block(REDUCEBLOCKSIZE, 1);   
-    
-    //int *ixs =(int*)malloc(w*sizeof(int));
 
     dim3 num_blocks;
     num_blocks.y = 1; 
@@ -615,20 +684,8 @@ void find_min(int *d_M, int *d_indices, int *d_indices_ref, int w, int h, int cu
     do{
         num_blocks.x = (int)((reduce_num_elements-1)/(threads_per_block.x*REDUCE_ELEMENTS_PER_THREAD)) + 1;
         min_reduce<<<num_blocks, threads_per_block>>>(&(d_M[w*(h-1)]), d_indices, reduce_num_elements); 
-        reduce_num_elements = num_blocks.x;
-        
-        /*
-        cudaMemcpy(ixs, d_indices, current_w*sizeof(int), cudaMemcpyDeviceToHost);
-        printf("-----------------------------------------\n");
-        for(int i = 0; i < 20; i++)
-            printf("%d \n", ixs[i]);
-        getchar();
-        printf("-------------------\n");*/
-            
+        reduce_num_elements = num_blocks.x;          
     }while(num_blocks.x > 1);
-    
-      
-    //free(ixs);
     
 }
 
@@ -650,6 +707,17 @@ void remove_seam(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h
     dim3 num_blocks(nblocks_x, nblocks_y);
     remove_seam_kernel_step1<<<num_blocks, threads_per_block>>>(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
     remove_seam_kernel_step2<<<num_blocks, threads_per_block>>>(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
+}
+
+//UNUSED
+void update_costs(pixel *d_pixels, int *d_costs, int *d_costs_tmp, int *d_seam, int w, int h, int current_w){
+    dim3 threads_per_block(BLOCKSIZE, BLOCKSIZE);
+    int nblocks_x, nblocks_y;
+    nblocks_x = (int)((current_w-1)/(threads_per_block.x)) + 1;
+    nblocks_y = (int)((h-1)/(threads_per_block.y)) + 1;    
+    dim3 num_blocks(nblocks_x, nblocks_y);
+    update_costs_kernel_step1<<<num_blocks, threads_per_block>>>(d_pixels, d_costs, d_costs_tmp, d_seam, w, h, current_w);
+    update_costs_kernel_step2<<<num_blocks, threads_per_block>>>(d_costs, d_costs_tmp, d_seam, w, h, current_w);
 }
 
 
