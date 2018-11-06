@@ -2,6 +2,7 @@
 #include <stdio.h>
 //#include <assert.h>
 #include <stdlib.h>
+//#include <string.h>
 
 // CUDA runtime
 #include <cuda_runtime.h>
@@ -13,6 +14,7 @@
 */
 
 #include "image.h"
+#include "cost_data.h"
 
 #include "cuda_kernels.h"
 //#define STBI_ONLY_BMP
@@ -51,33 +53,58 @@ int main(int argc, char **argv) {
     int w = 0, h = 0, ncomp = 0;
     unsigned char *imgv = NULL;
     pixel *pixels = NULL;
-    pixel *d_pixels;
-    pixel *d_pixels_tmp;
-    int *d_costs;
-    int *d_costs_tmp;
-    int *costs;
-    int *M;
-    int *d_M;
-   
-    int *indices_ref;
-    int *d_indices_ref;
-    int *d_indices;
+    pixel *d_pixels = NULL;
+    pixel *d_pixels_tmp = NULL;
+    cost_data *d_costs = NULL;
+    cost_data *d_costs_tmp = NULL; ///////////////////////
+    //int *costs;
+    //int *M;
+    int *d_M = NULL;
     
-    int *d_seam;
-    int *seam;
+    int *indices_ref = NULL;
+    int *d_indices_ref = NULL;
+    int *d_indices = NULL;
     
+    int *d_seam = NULL;
+    //int *seam;
+    
+    int current_w, num_iterations;
     int i;
-     
-    imgv = stbi_load("imgs/beach.bmp", &w, &h, &ncomp, 0);
-    if(ncomp != 3)
-        printf("ERROR -- image does not have 3 components (RGB)\n");
+    long seams_to_remove;
+    char *check;
+    unsigned char *output;
+    int success;
+
+    if(argc < 3){
+        printf("usage: %s namefile seams_to_remove\n", argv[0]);
+        return 1;
+    }
+    seams_to_remove = strtol(argv[2], &check, 10);  //10 specifies base-10
+    if (check == argv[2]){   //if no characters were converted pointers are equal
+        printf("ERROR: can't convert string to number, exiting.\n");
+        return 1;
+    }
+    imgv = stbi_load(argv[1], &w, &h, &ncomp, 0);
+    if(imgv == NULL){
+        printf("ERROR: can't load image \"%s\" (maybe the file does not exist?), exiting.\n", argv[1]);
+        return 1;
+    }
+    if(ncomp != 3){
+        printf("ERROR: image does not have 3 components (RGB), exiting.\n");
+        return 1;
+    }
+    if(seams_to_remove < 0 || seams_to_remove >= w){
+        printf("ERROR: number of seams to remove is invalid, exiting.\n");
+        return 1;
+    }
+    
     pixels = build_pixels(imgv, w, h);
     free(imgv);
 
     cudaMalloc((void**)&d_pixels, w*h*sizeof(pixel)); 
     cudaMalloc((void**)&d_pixels_tmp, w*h*sizeof(pixel)); 
-    cudaMalloc((void**)&d_costs, 3*w*h*sizeof(int)); 
-    cudaMalloc((void**)&d_costs_tmp, 3*w*h*sizeof(int));  /////////////////////
+    cudaMalloc((void**)&d_costs, w*h*sizeof(cost_data)); 
+    //cudaMalloc((void**)&d_costs_tmp, w*h*sizeof(cost_data));  /////////////////////
     cudaMalloc((void**)&d_M, w*h*sizeof(int)); 
 
     //alloc on device for indices
@@ -94,9 +121,9 @@ int main(int argc, char **argv) {
     //call the kernel to calculate all costs 
     //compute_costs(d_pixels, d_costs, w, h, w);
     
-    int current_w = w;
-    int num_iterations = 0;
-    while(num_iterations < 1500){
+    current_w = w;
+    num_iterations = 0;
+    while(num_iterations < seams_to_remove){
         
         
         //call the kernel to calculate all costs 
@@ -117,7 +144,7 @@ int main(int argc, char **argv) {
         //only on the first iteration, initialize indices reference (in parallel with kernel execution)
         if(num_iterations == 0){
             indices_ref = (int*)malloc(w*sizeof(int));
-            for(int i = 0; i < w; i++)
+            for(i = 0; i < w; i++)
                 indices_ref[i] = i;
             //wait for previous kernel to finish, copy reference to device   
             cudaMemcpy(d_indices_ref, indices_ref, w*sizeof(int), cudaMemcpyHostToDevice);
@@ -172,8 +199,8 @@ int main(int argc, char **argv) {
         printf("%d ", seam[i]);
     }*/
     
-    unsigned char *output = flatten_pixels(pixels, w, h, current_w);
-    int success = stbi_write_bmp("img2.bmp", current_w, h, 3, output);
+    output = flatten_pixels(pixels, w, h, current_w);
+    success = stbi_write_bmp("img2.bmp", current_w, h, 3, output);
     
     printf("success : %d \n",success);
     

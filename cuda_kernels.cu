@@ -6,6 +6,7 @@ extern "C"{
 //#include <math.h>
 #include <limits.h>
 #include "image.h"
+#include "cost_data.h"
 }
 
 __constant__ pixel BORDER_PIXEL = {.r = 0, .g = 0, .b = 0, .a = 0};
@@ -13,18 +14,19 @@ __constant__ pixel BORDER_PIXEL = {.r = 0, .g = 0, .b = 0, .a = 0};
 //#define COMPUTE_M_SINGLE
 //#define COMPUTE_COSTS_FULL
 
-const int BLOCKSIZE = 16;
+//const int BLOCKSIZE = 16;
+const int BLOCKSIZEY = 16;
+const int BLOCKSIZEX = 16;
 
 #ifndef COMPUTE_COSTS_FULL
 
-__global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h, int current_w){
+__global__ void compute_costs_kernel(pixel* d_pixels, cost_data *d_costs, int w, int h, int current_w){
     //first row, first coloumn and last coloumn of shared memory are reserved for halo...
-    __shared__ pixel pix_cache[BLOCKSIZE][BLOCKSIZE];
+    __shared__ pixel pix_cache[BLOCKSIZEY][BLOCKSIZEX];
     //...and the global index in the image is computed accordingly to this 
-    int row = blockIdx.y*(BLOCKSIZE-1) + threadIdx.y -1 ; 
-    int coloumn = blockIdx.x*(BLOCKSIZE-2) + threadIdx.x -1; 
+    int row = blockIdx.y*(BLOCKSIZEY-1) + threadIdx.y -1 ; 
+    int coloumn = blockIdx.x*(BLOCKSIZEX-2) + threadIdx.x -1; 
     int ix = row*w + coloumn;
-    int wh = w*h;
     int cache_r = threadIdx.y;
     int cache_c = threadIdx.x;
     short active = 0;
@@ -34,9 +36,8 @@ __global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h
         active = 1;
         //if access to the image is out of bounds, set RGB values to 0
         //otherwise load pixel from global memory
-        if(row < 0 || coloumn < 0 || coloumn == current_w){
+        if(row < 0 || coloumn < 0 || coloumn == current_w)
             pix_cache[cache_r][cache_c] = BORDER_PIXEL;
-        }
         else
             pix_cache[cache_r][cache_c] = d_pixels[ix];
     }
@@ -46,10 +47,11 @@ __global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h
     
     //all the threads that are NOT in halo positions can now compute costs, with fast access to shared memory
     if(active && cache_r != 0 && cache_c != 0 
-        && cache_c != BLOCKSIZE-1 && coloumn < current_w){
+        && cache_c != BLOCKSIZEX-1 && coloumn < current_w){
         int rdiff, gdiff, bdiff;
         int p_r, p_g, p_b;
         
+        /*
         p_r = abs(pix_cache[cache_r][cache_c+1].r - pix_cache[cache_r][cache_c-1].r);
         p_g = abs(pix_cache[cache_r][cache_c+1].g - pix_cache[cache_r][cache_c-1].g);
         p_b = abs(pix_cache[cache_r][cache_c+1].b - pix_cache[cache_r][cache_c-1].b);
@@ -65,6 +67,30 @@ __global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h
         gdiff = p_g + abs(pix_cache[cache_r-1][cache_c].g - pix_cache[cache_r][cache_c+1].g);
         bdiff = p_b + abs(pix_cache[cache_r-1][cache_c].b - pix_cache[cache_r][cache_c+1].b);
         d_costs[ix + 2*wh] = rdiff + gdiff + bdiff;
+        */
+        
+        
+        int cp1 = cache_c + 1;
+        int cm1 = cache_c - 1;
+        int rm1 = cache_r - 1;
+        p_r = abs(pix_cache[cache_r][cp1].r - pix_cache[cache_r][cm1].r);
+        p_g = abs(pix_cache[cache_r][cp1].g - pix_cache[cache_r][cm1].g);
+        p_b = abs(pix_cache[cache_r][cp1].b - pix_cache[cache_r][cm1].b);
+        //calc left
+        rdiff = p_r + abs(pix_cache[rm1][cache_c].r - pix_cache[cache_r][cm1].r);
+        gdiff = p_g + abs(pix_cache[rm1][cache_c].g - pix_cache[cache_r][cm1].g);
+        bdiff = p_b + abs(pix_cache[rm1][cache_c].b - pix_cache[cache_r][cm1].b);
+        d_costs[ix].left = rdiff + gdiff + bdiff;
+        //calc up
+        d_costs[ix].up = p_r + p_g + p_b;
+         //calc right
+        rdiff = p_r + abs(pix_cache[rm1][cache_c].r - pix_cache[cache_r][cp1].r);
+        gdiff = p_g + abs(pix_cache[rm1][cache_c].g - pix_cache[cache_r][cp1].g);
+        bdiff = p_b + abs(pix_cache[rm1][cache_c].b - pix_cache[cache_r][cp1].b);
+        d_costs[ix].right = rdiff + gdiff + bdiff;
+        
+        
+        //////////////////////////////////////////////////////////
         
         /*
         //calc left
@@ -95,12 +121,12 @@ __global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h
 
 #else
 
-__global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h, int current_w){
-    __shared__ pixel pix_cache[BLOCKSIZE+1][BLOCKSIZE+2];
-    int row = blockIdx.y*BLOCKSIZE + threadIdx.y; 
-    int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x; 
+
+__global__ void compute_costs_kernel(pixel* d_pixels, cost_data *d_costs, int w, int h, int current_w){
+    __shared__ pixel pix_cache[BLOCKSIZEY+1][BLOCKSIZEX+2];
+    int row = blockIdx.y*BLOCKSIZEY + threadIdx.y; 
+    int coloumn = blockIdx.x*BLOCKSIZEX + threadIdx.x; 
     int ix = row*w + coloumn;
-    int wh = w*h;
     int cache_r = threadIdx.y + 1;
     int cache_c = threadIdx.x + 1;
     short active = 0;
@@ -113,21 +139,19 @@ __global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h
             else
                 pix_cache[cache_r][0] = d_pixels[ix-1];
         }
-        if(threadIdx.x == BLOCKSIZE-1 || coloumn == current_w-1){
+        if(threadIdx.x == BLOCKSIZEX-1 || coloumn == current_w-1){
             if(coloumn == current_w-1)
                 pix_cache[cache_r][cache_c+1] = BORDER_PIXEL;
             else
-                pix_cache[cache_r][BLOCKSIZE+1] = d_pixels[ix+1];
+                pix_cache[cache_r][BLOCKSIZEX+1] = d_pixels[ix+1];
         }
         if(threadIdx.y == 0){
             if(row == 0)
                 pix_cache[0][cache_c] = BORDER_PIXEL;  
             else
                 pix_cache[0][cache_c] = d_pixels[ix-w];            
-        }
-        
-        pix_cache[cache_r][cache_c] = d_pixels[ix];
-        
+        }   
+        pix_cache[cache_r][cache_c] = d_pixels[ix];        
     }
     
     //wait until each thread has initialized its portion of shared memory
@@ -138,21 +162,24 @@ __global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h
         int rdiff, gdiff, bdiff;
         int p_r, p_g, p_b;
         
-        p_r = abs(pix_cache[cache_r][cache_c+1].r - pix_cache[cache_r][cache_c-1].r);
-        p_g = abs(pix_cache[cache_r][cache_c+1].g - pix_cache[cache_r][cache_c-1].g);
-        p_b = abs(pix_cache[cache_r][cache_c+1].b - pix_cache[cache_r][cache_c-1].b);
+        int cp1 = cache_c + 1;
+        int cm1 = cache_c - 1;
+        int rm1 = cache_r - 1;
+        p_r = abs(pix_cache[cache_r][cp1].r - pix_cache[cache_r][cm1].r);
+        p_g = abs(pix_cache[cache_r][cp1].g - pix_cache[cache_r][cm1].g);
+        p_b = abs(pix_cache[cache_r][cp1].b - pix_cache[cache_r][cm1].b);
         //calc left
-        rdiff = p_r + abs(pix_cache[cache_r-1][cache_c].r - pix_cache[cache_r][cache_c-1].r);
-        gdiff = p_g + abs(pix_cache[cache_r-1][cache_c].g - pix_cache[cache_r][cache_c-1].g);
-        bdiff = p_b + abs(pix_cache[cache_r-1][cache_c].b - pix_cache[cache_r][cache_c-1].b);
-        d_costs[ix] = rdiff + gdiff + bdiff;
+        rdiff = p_r + abs(pix_cache[rm1][cache_c].r - pix_cache[cache_r][cm1].r);
+        gdiff = p_g + abs(pix_cache[rm1][cache_c].g - pix_cache[cache_r][cm1].g);
+        bdiff = p_b + abs(pix_cache[rm1][cache_c].b - pix_cache[cache_r][cm1].b);
+        d_costs[ix].left = rdiff + gdiff + bdiff;
         //calc up
-        d_costs[ix + wh] = p_r + p_g + p_b;
+        d_costs[ix].up = p_r + p_g + p_b;
          //calc right
-        rdiff = p_r + abs(pix_cache[cache_r-1][cache_c].r - pix_cache[cache_r][cache_c+1].r);
-        gdiff = p_g + abs(pix_cache[cache_r-1][cache_c].g - pix_cache[cache_r][cache_c+1].g);
-        bdiff = p_b + abs(pix_cache[cache_r-1][cache_c].b - pix_cache[cache_r][cache_c+1].b);
-        d_costs[ix + 2*wh] = rdiff + gdiff + bdiff;
+        rdiff = p_r + abs(pix_cache[rm1][cache_c].r - pix_cache[cache_r][cp1].r);
+        gdiff = p_g + abs(pix_cache[rm1][cache_c].g - pix_cache[cache_r][cp1].g);
+        bdiff = p_b + abs(pix_cache[rm1][cache_c].b - pix_cache[cache_r][cp1].b);
+        d_costs[ix].right = rdiff + gdiff + bdiff;
      }
 }
 
@@ -161,14 +188,13 @@ __global__ void compute_costs_kernel(pixel* d_pixels, int* d_costs, int w, int h
 
 #ifndef COMPUTE_M_SINGLE
 
-const int WIDEBLOCKSIZE = 128; //must be divisible by 2
+const int WIDEBLOCKSIZE = 256; //must be divisible by 2
 
-__global__ void compute_M_kernel_step1(int *d_costs, int* d_M, int w, int h, int current_w, int base_row){
-    __shared__ int m_cache[WIDEBLOCKSIZE];
+__global__ void compute_M_kernel_step1(cost_data *d_costs, int* d_M, int w, int h, int current_w, int base_row){
+    __shared__ int m_cache[2*WIDEBLOCKSIZE];
     int row;
     int coloumn = blockIdx.x*WIDEBLOCKSIZE + threadIdx.x; 
     int cache_coloumn = threadIdx.x; 
-    int wh = w*h;
     short is_first;
     short is_last;
     int right, up, left;
@@ -177,7 +203,7 @@ __global__ void compute_M_kernel_step1(int *d_costs, int* d_M, int w, int h, int
     is_last = blockIdx.x == gridDim.x-1;
     
     if(base_row == 0 && coloumn < current_w){
-        left = min(d_costs[coloumn], min(d_costs[coloumn + wh], d_costs[coloumn + 2*wh]));
+        left = min(d_costs[coloumn].left, min(d_costs[coloumn].up, d_costs[coloumn].right));
         m_cache[cache_coloumn] = left;
         d_M[coloumn] = left; 
     }
@@ -187,6 +213,7 @@ __global__ void compute_M_kernel_step1(int *d_costs, int* d_M, int w, int h, int
     //wait until shared memory load is complete
     __syncthreads();
     
+    int shift = 0; 
     int ix;
     int inc = 0;
     for(row = base_row+1; row < base_row + WIDEBLOCKSIZE/2 && row < h; row++){
@@ -196,14 +223,14 @@ __global__ void compute_M_kernel_step1(int *d_costs, int* d_M, int w, int h, int
             
             //with left
             if(coloumn > 0)
-                left = m_cache[cache_coloumn - 1] + d_costs[ix]; 
+                left = m_cache[cache_coloumn - 1 + shift] + d_costs[ix].left; 
             else 
                 left = INT_MAX;
             //with up
-            up = m_cache[cache_coloumn] + d_costs[ix + wh];
+            up = m_cache[cache_coloumn + shift] + d_costs[ix].up;
             //with right
             if(coloumn < current_w-1)
-                right = m_cache[cache_coloumn + 1] + d_costs[ix + 2*wh];
+                right = m_cache[cache_coloumn + 1 + shift] + d_costs[ix].right;
             else
                 right = INT_MAX;
                 
@@ -227,24 +254,23 @@ __global__ void compute_M_kernel_step1(int *d_costs, int* d_M, int w, int h, int
             }*/
             
             d_M[ix] = left;
-
+            //swap read/write shared memory
+            shift = WIDEBLOCKSIZE - shift;
+            m_cache[cache_coloumn + shift] = left;
         }   
-        //wait until every thread has read shared memory
-        __syncthreads();
-        m_cache[cache_coloumn] = left;
         //wait until every thread has written shared memory
-        __syncthreads();          
+        __syncthreads();                
     }
 }
 
 
-__global__ void compute_M_kernel_step2(int *d_costs, int* d_M, int w, int h, int current_w, int base_row){
+__global__ void compute_M_kernel_step2(cost_data *d_costs, int* d_M, int w, int h, int current_w, int base_row){
     //__shared__ int m_cache[WIDEBLOCKSIZE];
     int row;
     int coloumn = blockIdx.x*WIDEBLOCKSIZE + threadIdx.x + WIDEBLOCKSIZE/2; 
-    int wh = w*h;
     // cache_coloumn = threadIdx.x; 
     int right, up, left;
+    right = INT_MAX;
    
     //if(coloumn < current_w)
     //   m_cache[cache_coloumn] = d_costs[base_row*w + coloumn];
@@ -259,16 +285,14 @@ __global__ void compute_M_kernel_step2(int *d_costs, int* d_M, int w, int h, int
         if((WIDEBLOCKSIZE/2 - inc -1 < threadIdx.x) && (threadIdx.x < WIDEBLOCKSIZE/2 + inc) && coloumn < current_w){
             ix = row*w + coloumn;
             prev_ix = ix - w; //(row-1)*w + coloumn
-            left = d_M[prev_ix - 1] + d_costs[ix]; 
+            left = d_M[prev_ix - 1] + d_costs[ix].left; 
             //with up
-            up = d_M[prev_ix] + d_costs[ix + wh];
+            up = d_M[prev_ix] + d_costs[ix].up;
             //with right
-            if(coloumn < current_w-1){
-                right = d_M[prev_ix + 1] + d_costs[ix + 2*wh];
-            }
-            else{
+            if(coloumn < current_w-1)
+                right = d_M[prev_ix + 1] + d_costs[ix].right;
+            else
                 right = INT_MAX;
-            }
             left = min(left, min(up, right));
                       
             /*
@@ -287,36 +311,35 @@ __global__ void compute_M_kernel_step2(int *d_costs, int* d_M, int w, int h, int
     }
 }
 
-__global__ void compute_M_kernel_small(int *d_costs, int* d_M, int w, int h, int current_w){
+__global__ void compute_M_kernel_small(cost_data *d_costs, int* d_M, int w, int h, int current_w){
     extern __shared__ int m_cache[];
     int coloumn = threadIdx.x;
     int row, ix;
-    int wh = w*h;
     int left, up, right;
     
     //first row
-    left = min(d_costs[coloumn], min(d_costs[coloumn + wh], d_costs[coloumn + 2*wh]));
+    left = min(d_costs[coloumn].left, min(d_costs[coloumn].up, d_costs[coloumn].right));
     d_M[coloumn] = left; 
     m_cache[coloumn] = left;
     
     __syncthreads(); 
+    
+    int shift = 0;
     
     //other rows
     for(row = 1; row < h; row++){
         if(coloumn < current_w){
             ix = row*w + coloumn;    
             //with left
-            if(coloumn > 0){
-                left = m_cache[coloumn - 1] + d_costs[ix]; 
-            }
+            if(coloumn > 0)
+                left = m_cache[coloumn - 1 + shift] + d_costs[ix].left; 
             else
                 left = INT_MAX;
             //with up
-            up = m_cache[coloumn] + d_costs[ix + wh];
+            up = m_cache[coloumn + shift] + d_costs[ix].up;
             //with right
-            if(coloumn < current_w-1){
-                right = m_cache[coloumn + 1] + d_costs[ix + 2*wh];
-            }
+            if(coloumn < current_w-1)
+                right = m_cache[coloumn + 1 + shift] + d_costs[ix].right;
             else
                 right = INT_MAX;
 
@@ -340,37 +363,34 @@ __global__ void compute_M_kernel_small(int *d_costs, int* d_M, int w, int h, int
             }*/
             
             d_M[ix] = left;
+            //swap read/write shared memory
+            shift = current_w - shift;   
+            m_cache[coloumn + shift] = left;
         }
-        //everyone has read
-        __syncthreads();
-        if(coloumn < current_w)
-            m_cache[coloumn] = left;
-        //everyone has written
-        __syncthreads();       
+        __syncthreads();    
     }
         
 }
 
 #else
 
-__global__ void compute_M_kernel_single(int *d_costs, int* d_M, int w, int h, int current_w, int n_elem){
+__global__ void compute_M_kernel_single(cost_data *d_costs, int* d_M, int w, int h, int current_w, int n_elem){
     extern __shared__ int m_cache[];
     int tid = threadIdx.x*n_elem;
     int i, row, coloumn, ix;
-    int wh = w*h;
     int left, up, right;
     
     //first row
     for(i = 0; i < n_elem && tid + i < current_w; i++){
         coloumn = tid + i;
-        left = min(d_costs[coloumn], min(d_costs[coloumn + wh], d_costs[coloumn + 2*wh]));
+        left = min(d_costs[coloumn].left, min(d_costs[coloumn].up, d_costs[coloumn].right));
         d_M[coloumn] = left; 
         m_cache[coloumn] = left;
     }
     
     __syncthreads(); 
     
-    short shift = 0;
+    int shift = 0;
     
     //other rows
     for(row = 1; row < h; row++){
@@ -380,15 +400,15 @@ __global__ void compute_M_kernel_single(int *d_costs, int* d_M, int w, int h, in
             
             //with left
             if(coloumn > 0){
-                left = m_cache[coloumn - 1 + shift*current_w] + d_costs[ix]; 
+                left = m_cache[coloumn - 1 + shift] + d_costs[ix].left; 
             }
             else
                 left = INT_MAX;
             //with up
-            up = m_cache[coloumn + shift*current_w] + d_costs[ix + wh];
+            up = m_cache[coloumn + shift] + d_costs[ix].up;
             //with right
             if(coloumn < current_w-1){
-                right = m_cache[coloumn + 1 + shift*current_w] + d_costs[ix + 2*wh];
+                right = m_cache[coloumn + 1 + shift] + d_costs[ix].right;
             }
             else
                 right = INT_MAX;
@@ -412,19 +432,18 @@ __global__ void compute_M_kernel_single(int *d_costs, int* d_M, int w, int h, in
             }*/
             
             d_M[ix] = left;
-            m_cache[coloumn + (1-shift)*current_w] = left;
-        }
-        
-        __syncthreads();
+            m_cache[coloumn + (current_w - shift)] = left;
+        }    
         //swap read/write shared memory
-        shift = 1 - shift;
+        shift = current_w - shift;
+        __syncthreads();
     }        
 }
 
 #endif
 
-const int REDUCEBLOCKSIZE = 128;
-const int REDUCE_ELEMENTS_PER_THREAD = 8;
+const int REDUCEBLOCKSIZE = 256;
+const int REDUCE_ELEMENTS_PER_THREAD = 4;
 
 __global__ void min_reduce(int* d_values, int* d_indices, int N){
     __shared__ int val_cache[REDUCEBLOCKSIZE];
@@ -484,21 +503,20 @@ __global__ void find_seam_kernel(int *d_M, int *d_indices, int *d_seam, int w, i
     for(row = h-2; row >= 0; row--){
         mid = min_index;
         if(mid != 0){
-            if(d_M[row*w + mid - 1] < d_M[row*w + min_index] )
+            if(d_M[row*w + mid - 1] < d_M[row*w + min_index])
                 min_index = mid - 1;
         }
         if(mid != current_w){
-            if(d_M[row*w + mid + 1] < d_M[row*w + min_index] )
+            if(d_M[row*w + mid + 1] < d_M[row*w + min_index])
                 min_index = mid + 1;
         }
         d_seam[row] = min_index;
     }
 }
 
-
 __global__ void remove_seam_kernel_step1(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
-    int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
-    int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
+    int row = blockIdx.y*BLOCKSIZEY + threadIdx.y;
+    int coloumn = blockIdx.x*BLOCKSIZEX + threadIdx.x;
     int seam_c = d_seam[row];
     int ix = row*w + coloumn;
     if(row < h && coloumn < current_w-1 && coloumn >= seam_c){
@@ -507,8 +525,8 @@ __global__ void remove_seam_kernel_step1(pixel *d_pixels, pixel *d_pixels_tmp, i
 }
 
 __global__ void remove_seam_kernel_step2(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
-    int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
-    int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
+    int row = blockIdx.y*BLOCKSIZEY + threadIdx.y;
+    int coloumn = blockIdx.x*BLOCKSIZEX + threadIdx.x;
     int seam_c = d_seam[row];
     int ix = row*w + coloumn;
     if(row < h && coloumn < current_w-1 && coloumn >= seam_c){
@@ -516,11 +534,10 @@ __global__ void remove_seam_kernel_step2(pixel *d_pixels, pixel *d_pixels_tmp, i
     }
 }
 
-__global__ void update_costs_kernel_step1(pixel *pixels, int *d_costs, int *d_costs_tmp, int *d_seam, int w, int h, int current_w){
-    int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
-    int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
+__global__ void update_costs_kernel_step1(pixel *pixels, cost_data *d_costs, cost_data *d_costs_tmp, int *d_seam, int w, int h, int current_w){
+    int row = blockIdx.y*BLOCKSIZEY + threadIdx.y;
+    int coloumn = blockIdx.x*BLOCKSIZEX + threadIdx.x;
     int seam_c = d_seam[row];
-    int wh = w*h;
     int ix = row*w + coloumn;
     if(row < h && coloumn < current_w-1){
         if(coloumn >= seam_c-2 && coloumn <= seam_c+1){
@@ -550,39 +567,38 @@ __global__ void update_costs_kernel_step1(pixel *pixels, int *d_costs, int *d_co
             rdiff = p_r + abs(pix3.r - pix2.r);
             gdiff = p_g + abs(pix3.g - pix2.g);
             bdiff = p_b + abs(pix3.b - pix2.b);
-            d_costs_tmp[ix] = rdiff + gdiff + bdiff;
+            d_costs_tmp[ix].left = rdiff + gdiff + bdiff;
             
             //compute up cost
-            d_costs_tmp[ix + wh] = p_r + p_g + p_b;
+            d_costs_tmp[ix].up = p_r + p_g + p_b;
             
             //compute right cost
             rdiff = p_r + abs(pix3.r - pix1.r);
             gdiff = p_g + abs(pix3.g - pix1.g);
             bdiff = p_b + abs(pix3.b - pix1.b);
-            d_costs_tmp[ix + 2*wh] = rdiff + gdiff + bdiff;
-            
+            d_costs_tmp[ix].right = rdiff + gdiff + bdiff;            
         }
         else if(coloumn > seam_c+1){
             //shift costs to the left
             d_costs_tmp[ix] = d_costs[ix + 1];
-            d_costs_tmp[ix + wh] = d_costs[ix + 1 + wh];
-            d_costs_tmp[ix + 2*wh] = d_costs[ix + 1 + 2*wh];
         }
     }
 }
 
-__global__ void update_costs_kernel_step2(int *d_costs, int *d_costs_tmp, int *d_seam, int w, int h, int current_w){
-    int row = blockIdx.y*BLOCKSIZE + threadIdx.y;
-    int coloumn = blockIdx.x*BLOCKSIZE + threadIdx.x;
+__global__ void update_costs_kernel_step2(cost_data *d_costs, cost_data *d_costs_tmp, int *d_seam, int w, int h, int current_w){
+    int row = blockIdx.y*BLOCKSIZEY + threadIdx.y;
+    int coloumn = blockIdx.x*BLOCKSIZEX + threadIdx.x;
     int seam_c = d_seam[row];
-    int wh = w*h;
     int ix = row*w + coloumn;
     if(row < h && coloumn < current_w-1 && coloumn >= seam_c-2){
         d_costs[ix] = d_costs_tmp[ix];
-        d_costs[ix + wh] = d_costs_tmp[ix + wh];
-        d_costs[ix + 2*wh] = d_costs_tmp[ix + 2*wh];
     }
 }
+
+
+/* ############### wrappers #################### */
+
+extern "C"{
 
 int next_pow2(int n){
     int res = 1;
@@ -591,15 +607,10 @@ int next_pow2(int n){
     return res;
 }
 
-
-/* ############### wrappers #################### */
-
-extern "C"{
-
 #ifndef COMPUTE_COSTS_FULL
 
-void compute_costs(pixel *d_pixels, int *d_costs, int w, int h, int current_w){
-    dim3 threads_per_block(BLOCKSIZE, BLOCKSIZE);
+void compute_costs(pixel *d_pixels, cost_data *d_costs, int w, int h, int current_w){
+    dim3 threads_per_block(BLOCKSIZEX, BLOCKSIZEY);
     int nblocks_x, nblocks_y;
     nblocks_x = (int)((current_w-1)/(threads_per_block.x-2)) + 1;
     nblocks_y = (int)((h-1)/(threads_per_block.y-1)) + 1;    
@@ -609,8 +620,8 @@ void compute_costs(pixel *d_pixels, int *d_costs, int w, int h, int current_w){
 
 #else
 
-void compute_costs(pixel *d_pixels, int *d_costs, int w, int h, int current_w){
-    dim3 threads_per_block(BLOCKSIZE, BLOCKSIZE);
+void compute_costs(pixel *d_pixels, cost_data *d_costs, int w, int h, int current_w){
+    dim3 threads_per_block(BLOCKSIZEX, BLOCKSIZEY);
     int nblocks_x, nblocks_y;
     nblocks_x = (int)((current_w-1)/(threads_per_block.x)) + 1;
     nblocks_y = (int)((h-1)/(threads_per_block.y)) + 1;    
@@ -622,13 +633,11 @@ void compute_costs(pixel *d_pixels, int *d_costs, int w, int h, int current_w){
 
 #ifndef COMPUTE_M_SINGLE
 
-void compute_M(int *d_costs, int *d_M, int w, int h, int current_w){
-    
-    
+void compute_M(cost_data *d_costs, int *d_M, int w, int h, int current_w){   
     if(current_w <= 1024){
         dim3 threads_per_block(current_w, 1);   
         dim3 num_blocks(1,1);
-        compute_M_kernel_small<<<num_blocks, threads_per_block, current_w*sizeof(int)>>>(d_costs, d_M, w, h, current_w);
+        compute_M_kernel_small<<<num_blocks, threads_per_block, 2*current_w*sizeof(int)>>>(d_costs, d_M, w, h, current_w);
     }
     else{
         dim3 threads_per_block(WIDEBLOCKSIZE, 1);
@@ -659,13 +668,10 @@ void compute_M(int *d_costs, int *d_M, int w, int h, int current_w){
 #else
 
 //compute M in a single block kernel
-void compute_M(int *d_costs, int *d_M, int w, int h, int current_w){
-
-    dim3 threads_per_block(1024, 1);   
+void compute_M(cost_data *d_costs, int *d_M, int w, int h, int current_w){
+    dim3 threads_per_block(min(1024, next_pow2(current_w)), 1);   
     dim3 num_blocks(1,1);
-    
     int num_el = (int)((current_w-1)/threads_per_block.x) + 1;
-    
     compute_M_kernel_single<<<num_blocks, threads_per_block, 2*current_w*sizeof(int)>>>(d_costs, d_M, w, h, current_w, num_el);
 }
 
@@ -700,7 +706,7 @@ void find_min(int *d_M, int *d_indices, int *d_indices_ref, int w, int h, int cu
 
 
 void remove_seam(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
-    dim3 threads_per_block(BLOCKSIZE, BLOCKSIZE);
+    dim3 threads_per_block(BLOCKSIZEX, BLOCKSIZEY);
     int nblocks_x, nblocks_y;
     nblocks_x = (int)((current_w-1)/(threads_per_block.x)) + 1;
     nblocks_y = (int)((h-1)/(threads_per_block.y)) + 1;    
@@ -710,8 +716,8 @@ void remove_seam(pixel *d_pixels, pixel *d_pixels_tmp, int *d_seam, int w, int h
 }
 
 //UNUSED
-void update_costs(pixel *d_pixels, int *d_costs, int *d_costs_tmp, int *d_seam, int w, int h, int current_w){
-    dim3 threads_per_block(BLOCKSIZE, BLOCKSIZE);
+void update_costs(pixel *d_pixels, cost_data *d_costs, cost_data *d_costs_tmp, int *d_seam, int w, int h, int current_w){
+    dim3 threads_per_block(BLOCKSIZEX, BLOCKSIZEY);
     int nblocks_x, nblocks_y;
     nblocks_x = (int)((current_w-1)/(threads_per_block.x)) + 1;
     nblocks_y = (int)((h-1)/(threads_per_block.y)) + 1;    
