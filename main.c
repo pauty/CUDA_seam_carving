@@ -55,8 +55,8 @@ int main(int argc, char **argv) {
     pixel *pixels = NULL;
     pixel *d_pixels = NULL;
     pixel *d_pixels_tmp = NULL;
-    cost_data *d_costs = NULL;
-    cost_data *d_costs_tmp = NULL; ///////////////////////
+    cost_data d_costs;
+    //int *d_costs_tmp;
     //int *costs;
     //int *M;
     int *d_M = NULL;
@@ -103,8 +103,12 @@ int main(int argc, char **argv) {
 
     cudaMalloc((void**)&d_pixels, w*h*sizeof(pixel)); 
     cudaMalloc((void**)&d_pixels_tmp, w*h*sizeof(pixel)); 
-    cudaMalloc((void**)&d_costs, w*h*sizeof(cost_data)); 
-    //cudaMalloc((void**)&d_costs_tmp, w*h*sizeof(cost_data));  /////////////////////
+    
+    cudaMalloc((void**)&(d_costs.left), w*h*sizeof(int)); 
+    cudaMalloc((void**)&(d_costs.up), w*h*sizeof(int)); 
+    cudaMalloc((void**)&(d_costs.right), w*h*sizeof(int)); 
+    
+    //cudaMalloc((void**)&d_costs_tmp, 3*w*h*sizeof(int));  /////////////////////
     cudaMalloc((void**)&d_M, w*h*sizeof(int)); 
 
     //alloc on device for indices
@@ -206,7 +210,9 @@ int main(int argc, char **argv) {
     
     cudaFree(d_pixels);
     cudaFree(d_pixels_tmp);
-    cudaFree(d_costs);
+    cudaFree(d_costs.left);
+    cudaFree(d_costs.up);
+    cudaFree(d_costs.right);
     cudaFree(d_M); 
     cudaFree(d_indices); 
     cudaFree(d_indices_ref); 
