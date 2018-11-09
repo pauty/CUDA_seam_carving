@@ -1,6 +1,16 @@
 #ifndef IMAGE
 #define IMAGE
 
+#include <stdint.h>
+
+
+typedef struct pixel{
+    int r;
+    int g;
+    int b;  
+}pixel;
+
+/*
 typedef struct pixel{
     unsigned char r;
     unsigned char g;
@@ -13,5 +23,7 @@ typedef struct rgba_image{
     int h;
     pixel *pixels;
 }rgba_image;
+*/
+
 
 #endif

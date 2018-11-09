@@ -23,27 +23,46 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-pixel *build_pixels(const unsigned char *imgv, int w, int h){
-    pixel *pixels = (pixel*)malloc(w*h*sizeof(pixel));
+const uint32_t H_BITMASK = 0x000000FF;  
+
+uint32_t *build_pixels(const unsigned char *imgv, int w, int h){
+    uint32_t *pixels = (uint32_t*)malloc(w*h*sizeof(uint32_t));
     int i, j;
+    uint32_t pix;
     for(i = 0; i < h; i++){
         for(j = 0; j < w; j++){
-            pixels[i*w + j].r = imgv[i*3*w + 3*j];
-            pixels[i*w + j].g = imgv[i*3*w + 3*j + 1];
-            pixels[i*w + j].b = imgv[i*3*w + 3*j + 2]; 
+            pix = 0;
+            pix = (uint32_t)imgv[i*3*w + 3*j];
+            pix = (pix<<8) + (uint32_t)imgv[i*3*w + 3*j + 1];
+            pix = (pix<<8) + (uint32_t)imgv[i*3*w + 3*j + 2]; 
+            pixels[i*w + j] = pix;
+            /*
+            printf("%u \n",pix);
+            printf("original pixel: %d, %d, %d \n",(int)imgv[i*3*w + 3*j],(int)imgv[i*3*w + 3*j + 1], (int)imgv[i*3*w + 3*j + 2]);
+            printf("unpacked pixel: %d, %d, %d \n",(int)(pix & H_BITMASK),(int)((pix>>8) & H_BITMASK),(int)((pix>>16) & H_BITMASK));
+            getchar();
+            */
+            
         }
     }
     return pixels;
 }
 
-unsigned char *flatten_pixels(pixel *pixels, int w, int h, int new_w){
+unsigned char *flatten_pixels(uint32_t *pixels, int w, int h, int new_w){
     unsigned char *flattened = (unsigned char*)malloc(3*new_w*h*sizeof(unsigned char));
     int i, j;
+    uint32_t pix;
     for(i = 0; i < h; i++){
-        for(j = 0; j < new_w; j++){           
-            flattened[3*i*new_w + 3*j] = pixels[i*w + j].r;
-            flattened[3*i*new_w + 3*j + 1] = pixels[i*w + j].g;
-            flattened[3*i*new_w + 3*j + 2] = pixels[i*w + j].b;
+        for(j = 0; j < new_w; j++){ 
+            pix = pixels[i*w + j];
+            /*
+            flattened[3*i*new_w + 3*j] = (unsigned char)(pix & H_BITMASK);
+            flattened[3*i*new_w + 3*j + 1] = (unsigned char)((pix>>8) & H_BITMASK);
+            flattened[3*i*new_w + 3*j + 2] = (unsigned char)((pix>>16) & H_BITMASK);
+            */
+            flattened[3*i*new_w + 3*j + 2] = (unsigned char)(pix & H_BITMASK);
+            flattened[3*i*new_w + 3*j + 1] = (unsigned char)((pix>>8) & H_BITMASK);
+            flattened[3*i*new_w + 3*j] = (unsigned char)((pix>>16) & H_BITMASK);
         }
     }
     return flattened;
@@ -52,9 +71,10 @@ unsigned char *flatten_pixels(pixel *pixels, int w, int h, int new_w){
 int main(int argc, char **argv) {
     int w = 0, h = 0, ncomp = 0;
     unsigned char *imgv = NULL;
-    pixel *pixels = NULL;
-    pixel *d_pixels = NULL;
-    pixel *d_pixels_tmp = NULL;
+    uint32_t *pixels = NULL;
+    uint32_t *d_pixels = NULL;
+    uint32_t *d_pixels_tmp = NULL;
+    uint32_t *pixel_swap = NULL;
     cost_data d_costs;
     //int *d_costs_tmp;
     //int *costs;
@@ -66,7 +86,7 @@ int main(int argc, char **argv) {
     int *d_indices = NULL;
     
     int *d_seam = NULL;
-    //int *seam;
+    int *seam; //debug
     
     int current_w, num_iterations;
     int i;
@@ -101,8 +121,8 @@ int main(int argc, char **argv) {
     pixels = build_pixels(imgv, w, h);
     free(imgv);
 
-    cudaMalloc((void**)&d_pixels, w*h*sizeof(pixel)); 
-    cudaMalloc((void**)&d_pixels_tmp, w*h*sizeof(pixel)); 
+    cudaMalloc((void**)&d_pixels, w*h*sizeof(uint32_t)); 
+    cudaMalloc((void**)&d_pixels_tmp, w*h*sizeof(uint32_t)); 
     
     cudaMalloc((void**)&(d_costs.left), w*h*sizeof(int)); 
     cudaMalloc((void**)&(d_costs.up), w*h*sizeof(int)); 
@@ -117,10 +137,10 @@ int main(int argc, char **argv) {
     cudaMalloc((void**)&d_seam, h*sizeof(int)); 
     
     //copy image pixels from host to device 
-    cudaMemcpy(d_pixels, pixels, w*h*sizeof(pixel), cudaMemcpyHostToDevice);    
+    cudaMemcpy(d_pixels, pixels, w*h*sizeof(uint32_t), cudaMemcpyHostToDevice);    
        
     //M = (int*)malloc(w*h*sizeof(int)); //TO REMOVE
-    //seam = (int*)malloc(h*sizeof(int)); //TO REMOVE 
+    seam = (int*)malloc(h*sizeof(int)); //TO REMOVE 
     
     //call the kernel to calculate all costs 
     //compute_costs(d_pixels, d_costs, w, h, w);
@@ -161,18 +181,23 @@ int main(int argc, char **argv) {
         //call the kernel to find the seam
         find_seam(d_M, d_indices, d_seam, w, h, current_w);
         
-        //cudaMemcpy(seam, d_seam, h*sizeof(pixel), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(seam, d_seam, h*sizeof(int), cudaMemcpyDeviceToHost);
         
-        
+     
         /*
         for(i = 0; i < h; i++)
             printf("%d \n", seam[i]);
-        getchar();*/
+        getchar();
+        */
         
         
         //call the kernel to remove seam
         remove_seam(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
         
+        pixel_swap = d_pixels;
+        d_pixels = d_pixels_tmp;
+        d_pixels_tmp = pixel_swap;
+               
         //update_costs(d_pixels, d_costs, d_costs_tmp, d_seam, w, h, current_w);
       
         //decrease current w
@@ -181,7 +206,7 @@ int main(int argc, char **argv) {
     }
     
     //copy new pixel values back to the host
-    cudaMemcpy(pixels, d_pixels, w*h*sizeof(pixel), cudaMemcpyDeviceToHost);
+    cudaMemcpy(pixels, d_pixels, w*h*sizeof(uint32_t), cudaMemcpyDeviceToHost);
     
     /*
     int i;
@@ -221,5 +246,7 @@ int main(int argc, char **argv) {
     free(pixels);
     free(indices_ref);
     free(output);
+    if(seam != NULL)
+        free(seam);
 
 }
