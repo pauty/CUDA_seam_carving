@@ -23,6 +23,8 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+//#define UPDATE_COSTS
+
 const uint32_t H_BITMASK = 0x000000FF;  
 
 uint32_t *build_pixels(const unsigned char *imgv, int w, int h){
@@ -74,11 +76,8 @@ int main(int argc, char **argv) {
     uint32_t *pixels = NULL;
     uint32_t *d_pixels = NULL;
     uint32_t *d_pixels_tmp = NULL;
-    uint32_t *pixel_swap = NULL;
+    uint32_t *pixels_swap = NULL;
     cost_data d_costs;
-    //int *d_costs_tmp;
-    //int *costs;
-    //int *M;
     int *d_M = NULL;
     
     int *indices_ref = NULL;
@@ -86,7 +85,7 @@ int main(int argc, char **argv) {
     int *d_indices = NULL;
     
     int *d_seam = NULL;
-    int *seam; //debug
+    int *seam = NULL; //debug
     
     int current_w, num_iterations;
     int i;
@@ -128,7 +127,14 @@ int main(int argc, char **argv) {
     cudaMalloc((void**)&(d_costs.up), w*h*sizeof(int)); 
     cudaMalloc((void**)&(d_costs.right), w*h*sizeof(int)); 
     
-    //cudaMalloc((void**)&d_costs_tmp, 3*w*h*sizeof(int));  /////////////////////
+    #ifdef UPDATE_COSTS
+    cost_data d_costs_tmp;
+    cost_data costs_swap;
+    cudaMalloc((void**)&(d_costs_tmp.left), w*h*sizeof(int)); 
+    cudaMalloc((void**)&(d_costs_tmp.up), w*h*sizeof(int)); 
+    cudaMalloc((void**)&(d_costs_tmp.right), w*h*sizeof(int));
+    #endif
+    
     cudaMalloc((void**)&d_M, w*h*sizeof(int)); 
 
     //alloc on device for indices
@@ -140,18 +146,21 @@ int main(int argc, char **argv) {
     cudaMemcpy(d_pixels, pixels, w*h*sizeof(uint32_t), cudaMemcpyHostToDevice);    
        
     //M = (int*)malloc(w*h*sizeof(int)); //TO REMOVE
-    seam = (int*)malloc(h*sizeof(int)); //TO REMOVE 
+    //seam = (int*)malloc(h*sizeof(int)); //TO REMOVE 
     
-    //call the kernel to calculate all costs 
-    //compute_costs(d_pixels, d_costs, w, h, w);
+    #ifdef UPDATE_COSTS
+    //call the kernel to calculate all costs (only once)
+    compute_costs(d_pixels, d_costs, w, h, w);
+    #endif
     
     current_w = w;
     num_iterations = 0;
     while(num_iterations < seams_to_remove){
         
-        
+        #ifndef UPDATE_COSTS
         //call the kernel to calculate all costs 
         compute_costs(d_pixels, d_costs, w, h, current_w);
+        #endif
         
         
         //call the kernel to compute comulative map
@@ -181,8 +190,7 @@ int main(int argc, char **argv) {
         //call the kernel to find the seam
         find_seam(d_M, d_indices, d_seam, w, h, current_w);
         
-        //cudaMemcpy(seam, d_seam, h*sizeof(int), cudaMemcpyDeviceToHost);
-        
+        //cudaMemcpy(seam, d_seam, h*sizeof(int), cudaMemcpyDeviceToHost); 
      
         /*
         for(i = 0; i < h; i++)
@@ -193,13 +201,19 @@ int main(int argc, char **argv) {
         
         //call the kernel to remove seam
         remove_seam(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
-        
-        pixel_swap = d_pixels;
+        //swap pixels
+        pixels_swap = d_pixels;
         d_pixels = d_pixels_tmp;
-        d_pixels_tmp = pixel_swap;
-               
-        //update_costs(d_pixels, d_costs, d_costs_tmp, d_seam, w, h, current_w);
-      
+        d_pixels_tmp = pixels_swap;
+        
+        #ifdef UPDATE_COSTS 
+        update_costs(d_pixels, d_costs, d_costs_tmp, d_seam, w, h, current_w);
+        //swap costs
+        costs_swap = d_costs;
+        d_costs = d_costs_tmp;
+        d_costs_tmp = costs_swap;
+        #endif
+        
         //decrease current w
         current_w = current_w - 1;
         num_iterations = num_iterations + 1;
@@ -238,6 +252,11 @@ int main(int argc, char **argv) {
     cudaFree(d_costs.left);
     cudaFree(d_costs.up);
     cudaFree(d_costs.right);
+    #ifdef UPDATE_COSTS
+    cudaFree(d_costs_tmp.left);
+    cudaFree(d_costs_tmp.up);
+    cudaFree(d_costs_tmp.right);
+    #endif
     cudaFree(d_M); 
     cudaFree(d_indices); 
     cudaFree(d_indices_ref); 
@@ -248,5 +267,6 @@ int main(int argc, char **argv) {
     free(output);
     if(seam != NULL)
         free(seam);
+
 
 }
