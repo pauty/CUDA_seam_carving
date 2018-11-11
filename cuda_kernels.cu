@@ -23,10 +23,8 @@ __device__ pixel pixel_from_int(uint32_t intpix){
     return pix;
 }   
 
-
 //#define COMPUTE_M_SINGLE
 //#define COMPUTE_COSTS_FULL
-
 
 const int BLOCKSIZE_X = 64;
 const int BLOCKSIZE_Y = 8;
@@ -358,6 +356,46 @@ __global__ void compute_M_kernel_single(cost_data d_costs, int* d_M, int w, int 
     }        
 }
 
+/*
+// UNUSED --- compute M one row at a time with multiple kernel calls for global synchronization
+
+const int WIDEBLOCKSIZE = 128;
+
+__global__ void compute_M_kernel_iterate0(cost_data d_costs, int* d_M, int w, int current_w){
+    int coloumn = blockIdx.x*WIDEBLOCKSIZE + threadIdx.x; 
+    
+    if(coloumn < current_w){
+        d_M[coloumn] = min(d_costs.left[coloumn], min(d_costs.up[coloumn], d_costs.right[coloumn]));
+    }
+    
+}
+
+__global__ void compute_M_kernel_iterate1(cost_data d_costs, int* d_M, int w, int current_w, int row){
+    int coloumn = blockIdx.x*WIDEBLOCKSIZE + threadIdx.x; 
+    int ix = row*w + coloumn;
+    int prev_ix = ix - w;
+    int left, up, right;
+    
+    if(coloumn < current_w){
+        if(coloumn > 0)
+            left = d_M[prev_ix - 1] + d_costs.left[ix]; 
+        else
+            left = INT_MAX;
+            
+        //with up
+        up = d_M[prev_ix] + d_costs.up[ix];
+        
+        //with right
+        if(coloumn < current_w-1)
+            right = d_M[prev_ix + 1] + d_costs.right[ix];
+        else
+            right = INT_MAX;
+                       
+        d_M[ix] = min(left, min(up, right));  
+   } 
+}
+*/
+
 #endif
 
 const int REDUCEBLOCKSIZE = 128;
@@ -573,6 +611,19 @@ void compute_M(cost_data d_costs, int *d_M, int w, int h, int current_w){
     int num_el = (int)((current_w-1)/threads_per_block.x) + 1;
     compute_M_kernel_single<<<num_blocks, threads_per_block, 2*current_w*sizeof(int)>>>(d_costs, d_M, w, h, current_w, num_el);
 }
+
+/* //UNUSED
+void compute_M(cost_data d_costs, int *d_M, int w, int h, int current_w){
+    dim3 threads_per_block(WIDEBLOCKSIZE, 1);   
+    dim3 num_blocks;
+    num_blocks.x = (int)((current_w-1)/threads_per_block.x) + 1;
+    num_blocks.y = 1;
+    compute_M_kernel_iterate0<<<num_blocks, threads_per_block>>>(d_costs, d_M, w, current_w);
+    for(int row = 1; row < h; row++){
+        compute_M_kernel_iterate1<<<num_blocks, threads_per_block>>>(d_costs, d_M, w, current_w, row);
+    }
+}
+*/
 
 #endif
 

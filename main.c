@@ -37,14 +37,7 @@ uint32_t *build_pixels(const unsigned char *imgv, int w, int h){
             pix = (uint32_t)imgv[i*3*w + 3*j];
             pix = (pix<<8) + (uint32_t)imgv[i*3*w + 3*j + 1];
             pix = (pix<<8) + (uint32_t)imgv[i*3*w + 3*j + 2]; 
-            pixels[i*w + j] = pix;
-            /*
-            printf("%u \n",pix);
-            printf("original pixel: %d, %d, %d \n",(int)imgv[i*3*w + 3*j],(int)imgv[i*3*w + 3*j + 1], (int)imgv[i*3*w + 3*j + 2]);
-            printf("unpacked pixel: %d, %d, %d \n",(int)(pix & H_BITMASK),(int)((pix>>8) & H_BITMASK),(int)((pix>>16) & H_BITMASK));
-            getchar();
-            */
-            
+            pixels[i*w + j] = pix;            
         }
     }
     return pixels;
@@ -57,11 +50,6 @@ unsigned char *flatten_pixels(uint32_t *pixels, int w, int h, int new_w){
     for(i = 0; i < h; i++){
         for(j = 0; j < new_w; j++){ 
             pix = pixels[i*w + j];
-            /*
-            flattened[3*i*new_w + 3*j] = (unsigned char)(pix & H_BITMASK);
-            flattened[3*i*new_w + 3*j + 1] = (unsigned char)((pix>>8) & H_BITMASK);
-            flattened[3*i*new_w + 3*j + 2] = (unsigned char)((pix>>16) & H_BITMASK);
-            */
             flattened[3*i*new_w + 3*j + 2] = (unsigned char)(pix & H_BITMASK);
             flattened[3*i*new_w + 3*j + 1] = (unsigned char)((pix>>8) & H_BITMASK);
             flattened[3*i*new_w + 3*j] = (unsigned char)((pix>>16) & H_BITMASK);
