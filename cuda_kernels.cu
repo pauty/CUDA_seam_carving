@@ -6,7 +6,6 @@ extern "C"{
 #include <limits.h>
 #include <stdint.h>
 
-
 #include "image.h"
 #include "cost_data.h"
 }
@@ -550,10 +549,9 @@ int next_pow2(int n){
 
 void compute_costs(uint32_t *d_pixels, cost_data d_costs, int w, int h, int current_w){
     dim3 threads_per_block(BLOCKSIZE_X, BLOCKSIZE_Y);
-    int nblocks_x, nblocks_y;
-    nblocks_x = (int)((current_w-1)/(threads_per_block.x-2)) + 1;
-    nblocks_y = (int)((h-1)/(threads_per_block.y-1)) + 1;    
-    dim3 num_blocks(nblocks_x, nblocks_y);
+    dim3 num_blocks;
+    num_blocks.x = (int)((current_w-1)/(threads_per_block.x-2)) + 1;
+    num_blocks.y = (int)((h-1)/(threads_per_block.y-1)) + 1;    
     compute_costs_kernel<<<num_blocks, threads_per_block>>>(d_pixels, d_costs, w, h, current_w);
 }
 
@@ -561,10 +559,9 @@ void compute_costs(uint32_t *d_pixels, cost_data d_costs, int w, int h, int curr
 
 void compute_costs(uint32_t *d_pixels, cost_data d_costs, int w, int h, int current_w){
     dim3 threads_per_block(BLOCKSIZE_X, BLOCKSIZE_Y);
-    int nblocks_x, nblocks_y;
-    nblocks_x = (int)((current_w-1)/(threads_per_block.x)) + 1;
-    nblocks_y = (int)((h-1)/(threads_per_block.y)) + 1;    
-    dim3 num_blocks(nblocks_x, nblocks_y);
+    dim3 num_blocks;
+    num_blocks.x = (int)((current_w-1)/(threads_per_block.x)) + 1;
+    num_blocks.y = (int)((h-1)/(threads_per_block.y)) + 1;    
     compute_costs_kernel<<<num_blocks, threads_per_block>>>(d_pixels, d_costs, w, h, current_w);
 }
 
@@ -636,9 +633,10 @@ void find_min(int *d_M, int *d_indices, int *d_indices_ref, int w, int h, int cu
     dim3 num_blocks;
     num_blocks.y = 1; 
     int reduce_num_elements = current_w;
+    int *last_M_row = &(d_M[w*(h-1)]);
     do{
         num_blocks.x = (int)((reduce_num_elements-1)/(threads_per_block.x*REDUCE_ELEMENTS_PER_THREAD)) + 1;
-        min_reduce<<<num_blocks, threads_per_block>>>(&(d_M[w*(h-1)]), d_indices, reduce_num_elements); 
+        min_reduce<<<num_blocks, threads_per_block>>>(last_M_row, d_indices, reduce_num_elements); 
         reduce_num_elements = num_blocks.x;          
     }while(num_blocks.x > 1);    
 }
@@ -649,20 +647,18 @@ void find_seam(int* d_M, int *d_indices, int *d_seam, int w, int h, int current_
 
 void remove_seam(uint32_t *d_pixels, uint32_t *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
     dim3 threads_per_block(BLOCKSIZE_X, BLOCKSIZE_Y);
-    int nblocks_x, nblocks_y;
-    nblocks_x = (int)((current_w-1)/(threads_per_block.x)) + 1;
-    nblocks_y = (int)((h-1)/(threads_per_block.y)) + 1;    
-    dim3 num_blocks(nblocks_x, nblocks_y);
+    dim3 num_blocks;
+    num_blocks.x = (int)((current_w-1)/(threads_per_block.x)) + 1;
+    num_blocks.y = (int)((h-1)/(threads_per_block.y)) + 1;    
     remove_seam_kernel<<<num_blocks, threads_per_block>>>(d_pixels, d_pixels_tmp, d_seam, w, h, current_w);
 }
 
 //UNUSED
 void update_costs(uint32_t *d_pixels, cost_data d_costs, cost_data d_costs_tmp, int *d_seam, int w, int h, int current_w){
     dim3 threads_per_block(BLOCKSIZE_X, BLOCKSIZE_Y);
-    int nblocks_x, nblocks_y;
-    nblocks_x = (int)((current_w-1)/(threads_per_block.x)) + 1;
-    nblocks_y = (int)((h-1)/(threads_per_block.y)) + 1;    
-    dim3 num_blocks(nblocks_x, nblocks_y);
+    dim3 num_blocks;
+    num_blocks.x = (int)((current_w-1)/(threads_per_block.x)) + 1;
+    num_blocks.y = (int)((h-1)/(threads_per_block.y)) + 1;    
     update_costs_kernel<<<num_blocks, threads_per_block>>>(d_pixels, d_costs, d_costs_tmp, d_seam, w, h, current_w);
 }
 
