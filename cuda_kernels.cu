@@ -22,10 +22,12 @@ __device__ pixel pixel_from_int(uint32_t intpix){
     return pix;
 }   
 
-//#define COMPUTE_M_SINGLE
 //#define COMPUTE_COSTS_FULL
 
-const int BLOCKSIZE_X = 64;
+//#define COMPUTE_M_SINGLE
+//#define COMPUTE_M_ITERATE
+
+const int BLOCKSIZE_X = 32;
 const int BLOCKSIZE_Y = 8;
 
 #ifndef COMPUTE_COSTS_FULL
@@ -162,8 +164,7 @@ __global__ void compute_costs_kernel(uint32_t* d_pixels, cost_data d_costs, int 
 
 #endif
 
-
-#ifndef COMPUTE_M_SINGLE
+#if !defined(COMPUTE_M_SINGLE) && !defined(COMPUTE_M_ITERATE)
 
 const int WIDEBLOCKSIZE = 128; //must be divisible by 2
 
@@ -304,7 +305,9 @@ __global__ void compute_M_kernel_small(cost_data d_costs, int* d_M, int w, int h
     }     
 }
 
-#else
+#endif
+
+#ifdef COMPUTE_M_SINGLE
 
 __global__ void compute_M_kernel_single(cost_data d_costs, int* d_M, int w, int h, int current_w, int n_elem){
     extern __shared__ int m_cache[];
@@ -326,6 +329,7 @@ __global__ void compute_M_kernel_single(cost_data d_costs, int* d_M, int w, int 
     
     //other rows
     for(row = 1; row < h; row++){
+        #pragma unroll
         for(i = 0; i < n_elem && tid + i < current_w; i++){
             coloumn = tid + i;
             ix = row*w + coloumn;
@@ -355,9 +359,10 @@ __global__ void compute_M_kernel_single(cost_data d_costs, int* d_M, int w, int 
     }        
 }
 
-/*
-// UNUSED --- compute M one row at a time with multiple kernel calls for global synchronization
+#else
+#ifdef COMPUTE_M_ITERATE
 
+// UNUSED --- compute M one row at a time with multiple kernel calls for global synchronization
 const int WIDEBLOCKSIZE = 128;
 
 __global__ void compute_M_kernel_iterate0(cost_data d_costs, int* d_M, int w, int current_w){
@@ -393,7 +398,9 @@ __global__ void compute_M_kernel_iterate1(cost_data d_costs, int* d_M, int w, in
         d_M[ix] = min(left, min(up, right));  
    } 
 }
-*/
+
+
+#endif
 
 #endif
 
@@ -524,7 +531,8 @@ __global__ void update_costs_kernel(uint32_t *d_pixels, cost_data d_costs, cost_
             d_costs_tmp.up[ix] = d_costs.up[ix + 1];
             d_costs_tmp.right[ix] = d_costs.right[ix + 1];
         }
-        else if(coloumn < seam_c-2){
+        //else if(coloumn < seam_c-2){
+        else{
             //copy remaining costs
             d_costs_tmp.left[ix] = d_costs.left[ix];
             d_costs_tmp.up[ix] = d_costs.up[ix];
@@ -567,7 +575,7 @@ void compute_costs(uint32_t *d_pixels, cost_data d_costs, int w, int h, int curr
 
 #endif
 
-#ifndef COMPUTE_M_SINGLE
+#if !defined(COMPUTE_M_SINGLE) && !defined(COMPUTE_M_ITERATE)
 
 void compute_M(cost_data d_costs, int *d_M, int w, int h, int current_w){   
     if(current_w <= 1024){
@@ -599,7 +607,9 @@ void compute_M(cost_data d_costs, int *d_M, int w, int h, int current_w){
     }
 }
 
-#else
+#endif
+
+#ifdef COMPUTE_M_SINGLE
 
 //compute M in a single block kernel
 void compute_M(cost_data d_costs, int *d_M, int w, int h, int current_w){
@@ -609,7 +619,9 @@ void compute_M(cost_data d_costs, int *d_M, int w, int h, int current_w){
     compute_M_kernel_single<<<num_blocks, threads_per_block, 2*current_w*sizeof(int)>>>(d_costs, d_M, w, h, current_w, num_el);
 }
 
-/* //UNUSED
+#else
+#ifdef COMPUTE_M_ITERATE
+
 void compute_M(cost_data d_costs, int *d_M, int w, int h, int current_w){
     dim3 threads_per_block(WIDEBLOCKSIZE, 1);   
     dim3 num_blocks;
@@ -620,8 +632,8 @@ void compute_M(cost_data d_costs, int *d_M, int w, int h, int current_w){
         compute_M_kernel_iterate1<<<num_blocks, threads_per_block>>>(d_costs, d_M, w, current_w, row);
     }
 }
-*/
 
+#endif
 #endif
 
 void find_min(int *d_M, int *d_indices, int *d_indices_ref, int w, int h, int current_w){

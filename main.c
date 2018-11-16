@@ -256,5 +256,5 @@ int main(int argc, char **argv) {
     if(seam != NULL)
         free(seam);
 
-
+    return 0;
 }
