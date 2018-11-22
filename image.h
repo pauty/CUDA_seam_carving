@@ -1,8 +1,6 @@
 #ifndef IMAGE
 #define IMAGE
 
-#include <stdint.h>
-
 
 typedef struct pixel{
     int r;

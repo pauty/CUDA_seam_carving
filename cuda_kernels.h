@@ -1,13 +1,13 @@
 #ifndef CUDA_KERNELS
 #define CUDA_KERNELS
 
-#include <stdint.h>
+#include "seam_carver.h"
 
-void compute_costs(uint32_t* d_pixels, cost_data d_costs, int w, int h, int current_w);
-void compute_M(cost_data d_costs, int *d_M, int w, int h, int current_w);
-void find_min(int* d_M, int* d_indices, int* d_indices_ref, int w, int h, int current_w);
-void find_seam(int* d_M, int *d_indices, int *d_seam, int w, int h, int current_w);
-void remove_seam(uint32_t *d_pixels, uint32_t *d_pixels_tmp, int *d_seam, int w, int h, int current_w);
-void update_costs(uint32_t *d_pixels, cost_data d_costs, cost_data d_costs_tmp, int *d_seam, int w, int h, int current_w);
+void compute_costs(seam_carver sc);
+void compute_M(seam_carver sc);
+void find_min_index(seam_carver sc);
+void find_seam(seam_carver sc);
+void remove_seam(seam_carver sc);
+void update_costs(seam_carver sc);
 
 #endif
