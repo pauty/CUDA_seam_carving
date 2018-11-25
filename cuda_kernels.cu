@@ -31,6 +31,12 @@ const int REMOVE_BLOCKSIZE_Y = 8;
 const int UPDATE_BLOCKSIZE_X = 32;
 const int UPDATE_BLOCKSIZE_Y = 8;
 
+const int APPROX_SETUP_BLOCKSIZE_X = 32;
+const int APPROX_SETUP_BLOCKSIZE_Y = 8;
+
+const int APPROX_M_BLOCKSIZE_X = 128;
+
+
 __constant__ pixel BORDER_PIXEL = {.r = 0, .g = 0, .b = 0};
 
 
@@ -60,32 +66,32 @@ __global__ void compute_costs_kernel(uchar4 *d_pixels, cost_data d_costs, int w,
     int cache_coloumn = threadIdx.x;
     short active = 0;
      
-    if(row < h && coloumn <= current_w){
-        //only threads with row in [-1,h-1] and coloumn in [-1,current_w] are actually active
+    if(row >= 0 && row < h && coloumn >= 0 && coloumn < current_w){
         active = 1;
-        //if access to the image is out of bounds, set RGB values to 0
-        //otherwise load pixel from global memory
-        if(row < 0 || coloumn < 0 || coloumn == current_w){
-            pix_cache[cache_row][cache_coloumn] = BORDER_PIXEL;
-        }
-        else{
-            pix_cache[cache_row][cache_coloumn] = pixel_from_uchar4(d_pixels[ix]);
-        }
+        pix_cache[cache_row][cache_coloumn] = pixel_from_uchar4(d_pixels[ix]);
     }
     
     //wait until each thread has initialized its portion of shared memory
     __syncthreads();
     
     //all the threads that are NOT in halo positions can now compute costs, with fast access to shared memory
-    if(active && cache_row != 0 && cache_coloumn != 0 
-       && cache_coloumn != COSTS_BLOCKSIZE_X-1 && coloumn < current_w){
+    if(active && cache_row != 0 && cache_coloumn != 0 && cache_coloumn != COSTS_BLOCKSIZE_X-1){
         int rdiff, gdiff, bdiff;
         int p_r, p_g, p_b;
         pixel pix1, pix2, pix3;
         
-        pix1 = pix_cache[cache_row][cache_coloumn+1];
-        pix2 = pix_cache[cache_row][cache_coloumn-1];
-        pix3 = pix_cache[cache_row-1][cache_coloumn];
+        if(coloumn < current_w-1)
+            pix1 = pix_cache[cache_row][cache_coloumn+1];
+        else 
+            pix1 = BORDER_PIXEL;
+        if(coloumn > 0)
+            pix2 = pix_cache[cache_row][cache_coloumn-1];
+        else
+            pix2 = BORDER_PIXEL;
+        if(row > 0)
+            pix3 = pix_cache[cache_row-1][cache_coloumn];
+        else
+            pix3 = BORDER_PIXEL;
         
         //compute partials
         p_r = abs(pix1.r - pix2.r);
@@ -106,8 +112,8 @@ __global__ void compute_costs_kernel(uchar4 *d_pixels, cost_data d_costs, int w,
         gdiff = p_g + abs(pix3.g - pix1.g);
         bdiff = p_b + abs(pix3.b - pix1.b);
         d_costs.right[ix] = rdiff + gdiff + bdiff;         
-    }    
-}
+    }
+} 
 
 __global__ void compute_costs_full_kernel(uchar4* d_pixels, cost_data d_costs, int w, int h, int current_w){
     __shared__ pixel pix_cache[COSTS_BLOCKSIZE_Y+1][COSTS_BLOCKSIZE_X+2];
@@ -404,8 +410,8 @@ __global__ void min_reduce(int* d_values, int* d_indices, int size){
     int min_v = INT_MAX;
     int min_i = 0;
     int new_i, new_v;
-    int i;
-    for(i = 0; i < REDUCE_ELEMENTS_PER_THREAD && coloumn + i < size; i++){
+    
+    for(int i = 0; i < REDUCE_ELEMENTS_PER_THREAD && coloumn + i < size; i++){
             new_i = d_indices[coloumn + i];
             new_v  = d_values[new_i];
             if(new_v < min_v){
@@ -418,7 +424,7 @@ __global__ void min_reduce(int* d_values, int* d_indices, int size){
     
     __syncthreads();
     
-    for(i = REDUCE_BLOCKSIZE_X/2; i > 0; i = i/2){
+    for(int i = REDUCE_BLOCKSIZE_X/2; i > 0; i = i/2){
         if(tid < i){
             if(val_cache[tid + i] < val_cache[tid] || (val_cache[tid + i] == val_cache[tid] && ix_cache[tid + i] < ix_cache[tid])){
                 val_cache[tid] = val_cache[tid + i];
@@ -530,6 +536,63 @@ __global__ void update_costs_kernel(uchar4 *d_pixels, cost_data d_costs, cost_da
     }
 }
 
+
+__global__ void approx_setup_kernel(cost_data d_costs, int *d_index_map, int *d_offset_map, int *d_M, int w, int h, int current_w){
+    int row = blockIdx.y*APPROX_SETUP_BLOCKSIZE_Y + threadIdx.y;
+    int coloumn = blockIdx.x*APPROX_SETUP_BLOCKSIZE_X + threadIdx.x;
+    int ix = row*w + coloumn;
+    
+    if(row < h-1 && coloumn < current_w){
+        int min_cost = INT_MAX;
+        int map_ix;
+        int cost, ixx;
+       
+        if(coloumn > 0){
+            ixx = ix + w - 1;
+            min_cost = d_costs.right[ixx];
+            map_ix = ixx;
+        }
+        
+        ixx = ix + w;
+        cost = d_costs.up[ixx];
+        if(cost < min_cost){
+            min_cost = cost;
+            map_ix = ixx;
+        }
+        
+        if(coloumn < current_w-1){
+            ixx = ix + w + 1;
+            cost = d_costs.left[ixx];
+            if(cost < min_cost){
+                min_cost = cost;
+                map_ix = ixx;
+            }
+        }
+        
+        d_index_map[ix] = map_ix;
+        d_offset_map[ix] = map_ix;
+        d_M[ix] = min_cost;           
+    }
+}
+
+__global__ void approx_M_kernel(int *d_offset_map, int *d_M, int w, int h, int current_w, int step){
+        int row = blockIdx.y*2*step;
+        int next_row = row + step;
+        int coloumn = blockIdx.x*APPROX_M_BLOCKSIZE_X + threadIdx.x;
+        int ix = row*w + coloumn;
+        //int next_ix = next_row*w + coloumn;
+        
+        if(next_row < h-1 && coloumn < current_w){
+            int offset;
+            offset = d_offset_map[ix];
+            d_M[ix] = d_M[ix] + d_M[offset];
+            d_offset_map[ix] = d_offset_map[offset];
+            
+            //if(row == h-2 || next_row == h-2)
+             //   printf("ok");
+        }
+}
+
 /* ############### wrappers #################### */
 
 extern "C"{
@@ -616,7 +679,7 @@ void compute_M(seam_carver sc){
     #endif
 }
 
-void find_min_index(seam_carver sc){
+void find_min_index(seam_carver sc, short use_stream){
     //set the reference index array
     cudaMemcpy(sc.d_indices, sc.d_indices_ref, sc.current_w*sizeof(int), cudaMemcpyDeviceToDevice);
     
@@ -626,7 +689,10 @@ void find_min_index(seam_carver sc){
     int reduce_num_elements = sc.current_w;
     do{
         num_blocks.x = (int)((reduce_num_elements-1)/(threads_per_block.x*REDUCE_ELEMENTS_PER_THREAD)) + 1;
-        min_reduce<<<num_blocks, threads_per_block>>>(sc.reduce_row, sc.d_indices, reduce_num_elements); 
+        if(!use_stream)
+            min_reduce<<<num_blocks, threads_per_block>>>(sc.reduce_row, sc.d_indices, reduce_num_elements); 
+        else
+            min_reduce<<<num_blocks, threads_per_block, 0, sc.kernel_stream>>>(sc.reduce_row, sc.d_indices, reduce_num_elements); 
         reduce_num_elements = num_blocks.x;          
     }while(num_blocks.x > 1);    
 }
@@ -649,6 +715,27 @@ void update_costs(seam_carver sc){
     num_blocks.x = (int)((sc.current_w-1)/(threads_per_block.x)) + 1;
     num_blocks.y = (int)((sc.h-1)/(threads_per_block.y)) + 1;    
     update_costs_kernel<<<num_blocks, threads_per_block>>>(sc.d_pixels, sc.d_costs, sc.d_costs_swap, sc.d_seam, sc.w, sc.h, sc.current_w);
+}
+
+void approx_setup(seam_carver sc){
+    dim3 threads_per_block(APPROX_SETUP_BLOCKSIZE_X, APPROX_SETUP_BLOCKSIZE_Y);
+    dim3 num_blocks;
+    num_blocks.x = (int)((sc.current_w-1)/(threads_per_block.x)) + 1;
+    num_blocks.y = (int)((sc.h-2)/(threads_per_block.y)) + 1;    
+    approx_setup_kernel<<<num_blocks, threads_per_block>>>(sc.d_costs, sc.d_index_map, sc.d_offset_map, sc.d_M, sc.w, sc.h, sc.current_w);
+}
+
+void approx_M(seam_carver sc){
+    dim3 threads_per_block(APPROX_M_BLOCKSIZE_X, 1);
+    dim3 num_blocks;
+    num_blocks.x = (int)((sc.current_w-1)/(threads_per_block.x)) + 1;
+    num_blocks.y = (int)((sc.h)/2);  
+    int step = 1;
+    while(num_blocks.y > 0){
+        approx_M_kernel<<<num_blocks, threads_per_block, 0, sc.kernel_stream>>>(sc.d_offset_map, sc.d_M, sc.w, sc.h, sc.current_w, step);
+        num_blocks.y = (int)num_blocks.y/2;
+        step = step*2;
+    }
 }
 
 }

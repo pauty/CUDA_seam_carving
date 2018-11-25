@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
     
     printf("image loaded. Resizing...\n");
     seam_carver sc;
-    seam_carver_init(&sc, STANDARD, imgv, w, h);
+    seam_carver_init(&sc, APPROX, imgv, w, h);
     seam_carver_resize(&sc, (int)seams_to_remove);
     printf("image resized. Saving new image...\n");
 
