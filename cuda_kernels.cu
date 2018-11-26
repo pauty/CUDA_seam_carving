@@ -1,6 +1,7 @@
 //#include <cuda_runtime.h>
 
 extern "C"{
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -384,6 +385,7 @@ __global__ void compute_M_kernel_iterate1(cost_data d_costs, int* d_M, int w, in
     int left, up, right;
     
     if(coloumn < current_w){
+        //with left
         if(coloumn > 0)
             left = d_M[prev_ix - 1] + d_costs.left[ix]; 
         else
@@ -457,7 +459,7 @@ __global__ void find_seam_kernel(int *d_M, int *d_indices, int *d_seam, int w, i
     }
 }
 
-__global__ void remove_seam_kernel(uchar4 *d_pixels, uchar4 *d_pixels_tmp, int *d_seam, int w, int h, int current_w){
+__global__ void remove_seam_kernel(uchar4 *d_pixels, uchar4 *d_pixels_swap, int *d_seam, int w, int h, int current_w){
     int row = blockIdx.y*REMOVE_BLOCKSIZE_Y + threadIdx.y;
     int coloumn = blockIdx.x*REMOVE_BLOCKSIZE_X + threadIdx.x;
     int seam_c = d_seam[row];
@@ -470,11 +472,11 @@ __global__ void remove_seam_kernel(uchar4 *d_pixels, uchar4 *d_pixels_tmp, int *
         else
             pix = d_pixels[ix];
             
-        d_pixels_tmp[ix] = pix;
+        d_pixels_swap[ix] = pix;
     }
 }
 
-__global__ void update_costs_kernel(uchar4 *d_pixels, cost_data d_costs, cost_data d_costs_tmp, int *d_seam, int w, int h, int current_w){
+__global__ void update_costs_kernel(uchar4 *d_pixels, cost_data d_costs, cost_data d_costs_swap, int *d_seam, int w, int h, int current_w){
     int row = blockIdx.y*UPDATE_BLOCKSIZE_Y + threadIdx.y;
     int coloumn = blockIdx.x*UPDATE_BLOCKSIZE_X + threadIdx.x;
     int seam_c = d_seam[row];
@@ -509,29 +511,28 @@ __global__ void update_costs_kernel(uchar4 *d_pixels, cost_data d_costs, cost_da
             rdiff = p_r + abs(pix3.r - pix2.r);
             gdiff = p_g + abs(pix3.g - pix2.g);
             bdiff = p_b + abs(pix3.b - pix2.b);
-            d_costs_tmp.left[ix] = rdiff + gdiff + bdiff;
+            d_costs_swap.left[ix] = rdiff + gdiff + bdiff;
             
             //compute up cost
-            d_costs_tmp.up[ix] = p_r + p_g + p_b;
+            d_costs_swap.up[ix] = p_r + p_g + p_b;
             
             //compute right cost
             rdiff = p_r + abs(pix3.r - pix1.r);
             gdiff = p_g + abs(pix3.g - pix1.g);
             bdiff = p_b + abs(pix3.b - pix1.b);
-            d_costs_tmp.right[ix] = rdiff + gdiff + bdiff;             
+            d_costs_swap.right[ix] = rdiff + gdiff + bdiff;             
         }
         else if(coloumn > seam_c+1){
             //shift costs to the left
-            d_costs_tmp.left[ix] = d_costs.left[ix + 1];
-            d_costs_tmp.up[ix] = d_costs.up[ix + 1];
-            d_costs_tmp.right[ix] = d_costs.right[ix + 1];
+            d_costs_swap.left[ix] = d_costs.left[ix + 1];
+            d_costs_swap.up[ix] = d_costs.up[ix + 1];
+            d_costs_swap.right[ix] = d_costs.right[ix + 1];
         }
-        //else if(coloumn < seam_c-2){
         else{
             //copy remaining costs
-            d_costs_tmp.left[ix] = d_costs.left[ix];
-            d_costs_tmp.up[ix] = d_costs.up[ix];
-            d_costs_tmp.right[ix] = d_costs.right[ix];
+            d_costs_swap.left[ix] = d_costs.left[ix];
+            d_costs_swap.up[ix] = d_costs.up[ix];
+            d_costs_swap.right[ix] = d_costs.right[ix];
         }
     }
 }
@@ -592,6 +593,25 @@ __global__ void approx_M_kernel(int *d_offset_map, int *d_M, int w, int h, int c
              //   printf("ok");
         }
 }
+
+__global__ void approx_seam_kernel(int *d_index_map, int *d_indices, int *d_seam, int w, int h){
+    int ix;
+    ix = d_indices[0]; //min index
+    for(int i = 0; i < h; i++){
+            d_seam[i] = ix - i*w;
+            ix = d_index_map[ix];
+    }
+}
+
+/*################################################*/
+
+
+
+
+
+
+
+
 
 /* ############### wrappers #################### */
 
@@ -679,7 +699,7 @@ void compute_M(seam_carver sc){
     #endif
 }
 
-void find_min_index(seam_carver sc, short use_stream){
+void find_min_index(seam_carver sc){
     //set the reference index array
     cudaMemcpy(sc.d_indices, sc.d_indices_ref, sc.current_w*sizeof(int), cudaMemcpyDeviceToDevice);
     
@@ -689,10 +709,7 @@ void find_min_index(seam_carver sc, short use_stream){
     int reduce_num_elements = sc.current_w;
     do{
         num_blocks.x = (int)((reduce_num_elements-1)/(threads_per_block.x*REDUCE_ELEMENTS_PER_THREAD)) + 1;
-        if(!use_stream)
-            min_reduce<<<num_blocks, threads_per_block>>>(sc.reduce_row, sc.d_indices, reduce_num_elements); 
-        else
-            min_reduce<<<num_blocks, threads_per_block, 0, sc.kernel_stream>>>(sc.reduce_row, sc.d_indices, reduce_num_elements); 
+        min_reduce<<<num_blocks, threads_per_block>>>(sc.reduce_row, sc.d_indices, reduce_num_elements); 
         reduce_num_elements = num_blocks.x;          
     }while(num_blocks.x > 1);    
 }
@@ -732,10 +749,14 @@ void approx_M(seam_carver sc){
     num_blocks.y = (int)((sc.h)/2);  
     int step = 1;
     while(num_blocks.y > 0){
-        approx_M_kernel<<<num_blocks, threads_per_block, 0, sc.kernel_stream>>>(sc.d_offset_map, sc.d_M, sc.w, sc.h, sc.current_w, step);
+        approx_M_kernel<<<num_blocks, threads_per_block>>>(sc.d_offset_map, sc.d_M, sc.w, sc.h, sc.current_w, step);
         num_blocks.y = (int)num_blocks.y/2;
         step = step*2;
     }
+}
+
+void approx_seam(seam_carver sc){
+    approx_seam_kernel<<<1, 1>>>(sc.d_index_map, sc.d_indices, sc.d_seam, sc.w, sc.h);
 }
 
 }

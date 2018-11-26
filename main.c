@@ -2,7 +2,7 @@
 #include <stdio.h>
 //#include <assert.h>
 #include <stdlib.h>
-//#include <string.h>
+#include <string.h>
 
 // CUDA runtime
 //#include <cuda_runtime.h>
@@ -27,11 +27,13 @@ int main(int argc, char **argv) {
     unsigned char* imgv;
     long seams_to_remove;
     char *check;
-    int success;
     int w, h, ncomp;
-
+    short update = 0;
+    short approx = 0;
+    int success;
+    
     if(argc < 3){
-        printf("usage: %s namefile seams_to_remove\n", argv[0]);
+        printf("usage: %s namefile seams_to_remove [options]\nvalid options:\n-u\tupdate costs\n-a\tapproximate computation\n-ua\tuse both previous options", argv[0]);
         return 1;
     }
     
@@ -56,17 +58,35 @@ int main(int argc, char **argv) {
         return 1;
     }
     
+    if(argc >= 4){
+        if(strcmp(argv[3],"-u") == 0){
+            update = 1;
+            printf("update mode selected.\n");
+        }
+        else if(strcmp(argv[3],"-a") == 0){
+            approx = 1;
+            printf("approximation mode selected.\n");
+        }
+        else if(strcmp(argv[3],"-ua") == 0){
+            update = 1;
+            approx = 1;
+            printf("using both update and approximate modes.\n");
+        }
+        else{    
+            printf("an invalid option was specified and will be ignored. Valid options are: -u, -a, -ua.\n");
+        }
+    }
+    
     printf("image loaded. Resizing...\n");
     seam_carver sc;
-    seam_carver_init(&sc, APPROX, imgv, w, h);
+    seam_carver_init(&sc, imgv, w, h, update, approx); //last two parameters: update, approx
     seam_carver_resize(&sc, (int)seams_to_remove);
     printf("image resized. Saving new image...\n");
-
-    
+   
     success = stbi_write_bmp("img2.bmp", sc.current_w, sc.h, 3, sc.output);
     printf("success : %d \n", success);
     
-    seam_carver_free(&sc);
+    seam_carver_destroy(&sc);
     
     return 0;
 }
