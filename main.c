@@ -28,12 +28,11 @@ int main(int argc, char **argv) {
     long seams_to_remove;
     char *check;
     int w, h, ncomp;
-    short update = 0;
-    short approx = 0;
+    seam_carver_mode mode = SEAM_CARVER_STANDARD_MODE;
     int success;
     
     if(argc < 3){
-        printf("usage: %s namefile seams_to_remove [options]\nvalid options:\n-u\tupdate costs\n-a\tapproximate computation\n-ua\tuse both previous options", argv[0]);
+        printf("usage: %s namefile seams_to_remove [options]\nvalid options:\n-u\tupdate costs instead of recomputing them\n-a\tapproximate computation\n", argv[0]);
         return 1;
     }
     
@@ -60,26 +59,21 @@ int main(int argc, char **argv) {
     
     if(argc >= 4){
         if(strcmp(argv[3],"-u") == 0){
-            update = 1;
+            mode = SEAM_CARVER_UPDATE_MODE;
             printf("update mode selected.\n");
         }
         else if(strcmp(argv[3],"-a") == 0){
-            approx = 1;
+            mode = SEAM_CARVER_APPROX_MODE;
             printf("approximation mode selected.\n");
         }
-        else if(strcmp(argv[3],"-ua") == 0){
-            update = 1;
-            approx = 1;
-            printf("using both update and approximate modes.\n");
-        }
         else{    
-            printf("an invalid option was specified and will be ignored. Valid options are: -u, -a, -ua.\n");
+            printf("an invalid option was specified and will be ignored. Valid options are: -u, -a.\n");
         }
     }
     
     printf("image loaded. Resizing...\n");
     seam_carver sc;
-    seam_carver_init(&sc, imgv, w, h, update, approx); //last two parameters: update, approx
+    seam_carver_init(&sc, mode, imgv, w, h);
     seam_carver_resize(&sc, (int)seams_to_remove);
     printf("image resized. Saving new image...\n");
    

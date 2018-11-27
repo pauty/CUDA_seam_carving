@@ -5,10 +5,15 @@
 
 #include "cost_data.h"
 
+typedef enum{
+    SEAM_CARVER_STANDARD_MODE,
+    SEAM_CARVER_UPDATE_MODE,
+    SEAM_CARVER_APPROX_MODE
+}seam_carver_mode;
+
 typedef struct seam_carver{
     int w, h;
-    short use_update;
-    short use_approx;
+    seam_carver_mode mode;
     
     uchar4 *h_pixels;
     uchar4 *d_pixels;
@@ -42,7 +47,7 @@ typedef struct seam_carver{
     //cudaStream_t copy_stream;
 }seam_carver;
 
-void seam_carver_init(seam_carver *sc, unsigned char* img, int w, int h, short use_update, short use_approx);
+void seam_carver_init(seam_carver *sc, seam_carver_mode mode, unsigned char* img, int w, int h);
 void seam_carver_resize(seam_carver *sc, int seams_to_remove);
 void seam_carver_destroy(seam_carver *sc);
 

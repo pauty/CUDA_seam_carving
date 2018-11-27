@@ -71,6 +71,9 @@ __global__ void compute_costs_kernel(uchar4 *d_pixels, cost_data d_costs, int w,
         active = 1;
         pix_cache[cache_row][cache_coloumn] = pixel_from_uchar4(d_pixels[ix]);
     }
+    else{
+        pix_cache[cache_row][cache_coloumn] = BORDER_PIXEL;
+    }
     
     //wait until each thread has initialized its portion of shared memory
     __syncthreads();
@@ -81,18 +84,9 @@ __global__ void compute_costs_kernel(uchar4 *d_pixels, cost_data d_costs, int w,
         int p_r, p_g, p_b;
         pixel pix1, pix2, pix3;
         
-        if(coloumn < current_w-1)
-            pix1 = pix_cache[cache_row][cache_coloumn+1];
-        else 
-            pix1 = BORDER_PIXEL;
-        if(coloumn > 0)
-            pix2 = pix_cache[cache_row][cache_coloumn-1];
-        else
-            pix2 = BORDER_PIXEL;
-        if(row > 0)
-            pix3 = pix_cache[cache_row-1][cache_coloumn];
-        else
-            pix3 = BORDER_PIXEL;
+        pix1 = pix_cache[cache_row][cache_coloumn+1];
+        pix2 = pix_cache[cache_row][cache_coloumn-1];
+        pix3 = pix_cache[cache_row-1][cache_coloumn];
         
         //compute partials
         p_r = abs(pix1.r - pix2.r);
@@ -537,7 +531,7 @@ __global__ void update_costs_kernel(uchar4 *d_pixels, cost_data d_costs, cost_da
     }
 }
 
-
+/*
 __global__ void approx_setup_kernel(cost_data d_costs, int *d_index_map, int *d_offset_map, int *d_M, int w, int h, int current_w){
     int row = blockIdx.y*APPROX_SETUP_BLOCKSIZE_Y + threadIdx.y;
     int coloumn = blockIdx.x*APPROX_SETUP_BLOCKSIZE_X + threadIdx.x;
@@ -574,23 +568,114 @@ __global__ void approx_setup_kernel(cost_data d_costs, int *d_index_map, int *d_
         d_offset_map[ix] = map_ix;
         d_M[ix] = min_cost;           
     }
-}
+}*/
+
+__global__ void approx_setup_kernel(uchar4 *d_pixels, int *d_index_map, int *d_offset_map, int *d_M, int w, int h, int current_w){
+    //first row, first coloumn and last coloumn of shared memory are reserved for halo...
+    __shared__ pixel pix_cache[APPROX_SETUP_BLOCKSIZE_Y][APPROX_SETUP_BLOCKSIZE_X];
+    __shared__ int left_cache[APPROX_SETUP_BLOCKSIZE_Y][APPROX_SETUP_BLOCKSIZE_X];
+    __shared__ int up_cache[APPROX_SETUP_BLOCKSIZE_Y][APPROX_SETUP_BLOCKSIZE_X];
+    __shared__ int right_cache[APPROX_SETUP_BLOCKSIZE_Y][APPROX_SETUP_BLOCKSIZE_X];
+    //...and the global index in the image is computed accordingly to this 
+    int row = blockIdx.y*(APPROX_SETUP_BLOCKSIZE_Y-1) + threadIdx.y -1 ; 
+    int coloumn = blockIdx.x*(APPROX_SETUP_BLOCKSIZE_X-2) + threadIdx.x -1; 
+    int ix = row*w + coloumn;
+    int cache_row = threadIdx.y;
+    int cache_coloumn = threadIdx.x;
+    short active = 0;
+     
+    if(row >= 0 && row < h && coloumn >= 0 && coloumn < current_w){
+        active = 1;
+        pix_cache[cache_row][cache_coloumn] = pixel_from_uchar4(d_pixels[ix]);
+    }
+    else{
+        pix_cache[cache_row][cache_coloumn] = BORDER_PIXEL;
+    }
+    
+    //wait until each thread has initialized its portion of shared memory
+    __syncthreads();
+    
+    //all the threads that are NOT in halo positions can now compute costs, with fast access to shared memory
+    if(active && cache_row > 0){
+        int rdiff, gdiff, bdiff;
+        int p_r, p_g, p_b;
+        pixel pix1, pix2, pix3;
+        
+        if(cache_coloumn != APPROX_SETUP_BLOCKSIZE_X-1){
+            pix1 = pix_cache[cache_row][cache_coloumn+1];
+        }
+            
+        if(cache_coloumn != 0){
+            pix2 = pix_cache[cache_row][cache_coloumn-1];
+        }
+        
+        pix3 = pix_cache[cache_row-1][cache_coloumn];
+       
+        //compute partials
+        p_r = abs(pix1.r - pix2.r);
+        p_g = abs(pix1.g - pix2.g);
+        p_b = abs(pix1.b - pix2.b);
+        
+        //compute left cost       
+        rdiff = p_r + abs(pix3.r - pix2.r);
+        gdiff = p_g + abs(pix3.g - pix2.g);
+        bdiff = p_b + abs(pix3.b - pix2.b);
+        left_cache[cache_row][cache_coloumn] = rdiff + gdiff + bdiff;
+        
+        //compute up cost
+        up_cache[cache_row][cache_coloumn] = p_r + p_g + p_b;
+        
+        //compute right cost
+        rdiff = p_r + abs(pix3.r - pix1.r);
+        gdiff = p_g + abs(pix3.g - pix1.g);
+        bdiff = p_b + abs(pix3.b - pix1.b);
+        right_cache[cache_row][cache_coloumn] = rdiff + gdiff + bdiff;             
+    }
+    
+    __syncthreads();
+    
+    if(active && row < h-1 && cache_coloumn != 0 && cache_coloumn != APPROX_SETUP_BLOCKSIZE_X-1 && cache_row != APPROX_SETUP_BLOCKSIZE_Y-1){
+        int min_cost = INT_MAX;
+        int map_ix;
+        int cost;
+       
+        if(coloumn > 0){
+            min_cost = right_cache[cache_row+1][cache_coloumn-1];
+            map_ix = ix + w - 1;
+        }
+        
+        cost = up_cache[cache_row+1][cache_coloumn];
+        if(cost < min_cost){
+            min_cost = cost;
+            map_ix = ix + w;
+        }
+        
+        if(coloumn < current_w-1){
+            cost = left_cache[cache_row+1][cache_coloumn+1];
+            if(cost < min_cost){
+                min_cost = cost;
+                map_ix = ix + w + 1;
+            }
+        }
+        
+        d_index_map[ix] = map_ix;
+        d_offset_map[ix] = map_ix;
+        d_M[ix] = min_cost;              
+    }
+} 
+
 
 __global__ void approx_M_kernel(int *d_offset_map, int *d_M, int w, int h, int current_w, int step){
         int row = blockIdx.y*2*step;
         int next_row = row + step;
         int coloumn = blockIdx.x*APPROX_M_BLOCKSIZE_X + threadIdx.x;
         int ix = row*w + coloumn;
-        //int next_ix = next_row*w + coloumn;
         
         if(next_row < h-1 && coloumn < current_w){
             int offset;
             offset = d_offset_map[ix];
             d_M[ix] = d_M[ix] + d_M[offset];
             d_offset_map[ix] = d_offset_map[offset];
-            
-            //if(row == h-2 || next_row == h-2)
-             //   printf("ok");
         }
 }
 
@@ -602,6 +687,7 @@ __global__ void approx_seam_kernel(int *d_index_map, int *d_indices, int *d_seam
             ix = d_index_map[ix];
     }
 }
+
 
 /*################################################*/
 
@@ -734,12 +820,21 @@ void update_costs(seam_carver sc){
     update_costs_kernel<<<num_blocks, threads_per_block>>>(sc.d_pixels, sc.d_costs, sc.d_costs_swap, sc.d_seam, sc.w, sc.h, sc.current_w);
 }
 
+/*
 void approx_setup(seam_carver sc){
     dim3 threads_per_block(APPROX_SETUP_BLOCKSIZE_X, APPROX_SETUP_BLOCKSIZE_Y);
     dim3 num_blocks;
     num_blocks.x = (int)((sc.current_w-1)/(threads_per_block.x)) + 1;
     num_blocks.y = (int)((sc.h-2)/(threads_per_block.y)) + 1;    
     approx_setup_kernel<<<num_blocks, threads_per_block>>>(sc.d_costs, sc.d_index_map, sc.d_offset_map, sc.d_M, sc.w, sc.h, sc.current_w);
+}*/
+
+void approx_setup(seam_carver sc){
+    dim3 threads_per_block(APPROX_SETUP_BLOCKSIZE_X, APPROX_SETUP_BLOCKSIZE_Y);
+    dim3 num_blocks;
+    num_blocks.x = (int)((sc.current_w-1)/(threads_per_block.x-2)) + 1;
+    num_blocks.y = (int)((sc.h-2)/(threads_per_block.y-1)) + 1;    
+    approx_setup_kernel<<<num_blocks, threads_per_block>>>(sc.d_pixels, sc.d_index_map, sc.d_offset_map, sc.d_M, sc.w, sc.h, sc.current_w);
 }
 
 void approx_M(seam_carver sc){

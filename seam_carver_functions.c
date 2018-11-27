@@ -36,23 +36,24 @@ unsigned char *flatten_pixels(uchar4 *pixels, int w, int h, int new_w){
 }
 
 //INIT
-void seam_carver_init(seam_carver *sc, unsigned char* imgv, int w, int h, short use_update, short use_approx){
+void seam_carver_init(seam_carver *sc, seam_carver_mode mode, unsigned char* imgv, int w, int h){
     sc->w = w;
     sc->h = h;
     sc->current_w = w;
-    sc->use_update = use_update;
-    sc->use_approx = use_approx;    
+    sc->mode = mode;
     
     sc->h_pixels = build_pixels(imgv, w, h);
    
     cudaMalloc((void**)&sc->d_pixels, w*h*sizeof(uchar4)); 
     cudaMalloc((void**)&sc->d_pixels_swap, w*h*sizeof(uchar4)); 
     
-    cudaMalloc((void**)&(sc->d_costs.left), w*h*sizeof(int)); 
-    cudaMalloc((void**)&(sc->d_costs.up), w*h*sizeof(int)); 
-    cudaMalloc((void**)&(sc->d_costs.right), w*h*sizeof(int)); 
+    if(sc->mode != SEAM_CARVER_APPROX_MODE){
+        cudaMalloc((void**)&(sc->d_costs.left), w*h*sizeof(int)); 
+        cudaMalloc((void**)&(sc->d_costs.up), w*h*sizeof(int)); 
+        cudaMalloc((void**)&(sc->d_costs.right), w*h*sizeof(int)); 
+    }
     
-    if(sc->use_update){
+    if(sc->mode == SEAM_CARVER_UPDATE_MODE){
         cudaMalloc((void**)&(sc->d_costs_swap.left), w*h*sizeof(int)); 
         cudaMalloc((void**)&(sc->d_costs_swap.up), w*h*sizeof(int)); 
         cudaMalloc((void**)&(sc->d_costs_swap.right), w*h*sizeof(int));
@@ -60,12 +61,12 @@ void seam_carver_init(seam_carver *sc, unsigned char* imgv, int w, int h, short 
     
     cudaMalloc((void**)&sc->d_M, w*h*sizeof(int)); 
     
-    if(sc->use_approx)
+    if(sc->mode == SEAM_CARVER_APPROX_MODE)
         sc->reduce_row = &(sc->d_M[0]); //first row
     else
         sc->reduce_row = &(sc->d_M[w*(h-1)]); //last row
         
-    if(sc->use_approx){
+    if(sc->mode == SEAM_CARVER_APPROX_MODE){
         cudaMalloc((void**)&sc->d_index_map, w*h*sizeof(int));
         cudaMalloc((void**)&sc->d_offset_map, w*h*sizeof(int));
         //cudaMallocHost((void**)&sc->h_index_map, w*h*sizeof(int));
@@ -95,18 +96,18 @@ void seam_carver_resize(seam_carver *sc, int seams_to_remove){
     //copy indices reference to device
     cudaMemcpy(sc->d_indices_ref, indices, sc->w*sizeof(int), cudaMemcpyHostToDevice);   
     
-    if(sc->use_update){
+    if(sc->mode == SEAM_CARVER_UPDATE_MODE){
         compute_costs(*sc);
     }
     
     num_iterations = 0;
     while(num_iterations < seams_to_remove){
         
-        if(!sc->use_update){
+        if(sc->mode == SEAM_CARVER_STANDARD_MODE){
             compute_costs(*sc);
         }
         
-        if(!sc->use_approx){
+        if(sc->mode != SEAM_CARVER_APPROX_MODE){
             compute_M(*sc);
             find_min_index(*sc); 
             find_seam(*sc);
@@ -124,7 +125,7 @@ void seam_carver_resize(seam_carver *sc, int seams_to_remove){
         sc->d_pixels = sc->d_pixels_swap;
         sc->d_pixels_swap = pixels_tmp;
         
-        if(sc->use_update){
+        if(sc->mode == SEAM_CARVER_UPDATE_MODE){
             update_costs(*sc);
             //swap costs
             costs_tmp = sc->d_costs;
@@ -145,10 +146,12 @@ void seam_carver_resize(seam_carver *sc, int seams_to_remove){
 void seam_carver_destroy(seam_carver *sc){
     cudaFree(sc->d_pixels);
     cudaFree(sc->d_pixels_swap);
-    cudaFree(sc->d_costs.left);
-    cudaFree(sc->d_costs.up);
-    cudaFree(sc->d_costs.right);
-    if(sc->use_update){
+    if(sc->mode != SEAM_CARVER_APPROX_MODE){
+        cudaFree(sc->d_costs.left);
+        cudaFree(sc->d_costs.up);
+        cudaFree(sc->d_costs.right);
+    }
+    if(sc->mode == SEAM_CARVER_UPDATE_MODE){
         cudaFree(sc->d_costs_swap.left);
         cudaFree(sc->d_costs_swap.up);
         cudaFree(sc->d_costs_swap.right);
@@ -157,7 +160,7 @@ void seam_carver_destroy(seam_carver *sc){
     cudaFree(sc->d_indices); 
     cudaFree(sc->d_indices_ref); 
     cudaFree(sc->d_seam);
-    if(sc->use_approx){
+    if(sc->mode == SEAM_CARVER_APPROX_MODE){
         cudaFree(sc->d_index_map);
         cudaFree(sc->d_offset_map);
     }
