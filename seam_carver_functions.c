@@ -103,7 +103,7 @@ void seam_carver_resize(seam_carver *sc, int seams_to_remove){
     num_iterations = 0;
     while(num_iterations < seams_to_remove){
         
-        if(sc->mode == SEAM_CARVER_STANDARD_MODE){
+        if(sc->mode == SEAM_CARVER_STANDARD_MODE){ //|| sc->mode == SEAM_CARVER_APPROX_MODE){ /////
             compute_costs(*sc);
         }
         
