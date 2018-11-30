@@ -2,9 +2,9 @@
 #define COST_DATA
 
 typedef struct cost_data{
-    int *left;
-    int *up;
-    int *right;
+    short *left;
+    short *up;
+    short *right;
 }cost_data;
 
 #endif

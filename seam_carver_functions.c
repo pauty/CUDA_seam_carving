@@ -48,15 +48,16 @@ void seam_carver_init(seam_carver *sc, seam_carver_mode mode, unsigned char* img
     cudaMalloc((void**)&sc->d_pixels_swap, w*h*sizeof(uchar4)); 
     
     if(sc->mode != SEAM_CARVER_APPROX_MODE){
-        cudaMalloc((void**)&(sc->d_costs.left), w*h*sizeof(int)); 
-        cudaMalloc((void**)&(sc->d_costs.up), w*h*sizeof(int)); 
-        cudaMalloc((void**)&(sc->d_costs.right), w*h*sizeof(int)); 
+        cudaMalloc((void**)&(sc->d_costs.left), w*h*sizeof(short)); 
+        cudaMalloc((void**)&(sc->d_costs.up), w*h*sizeof(short)); 
+        cudaMalloc((void**)&(sc->d_costs.right), w*h*sizeof(short)); 
     }
+    //printf("%lu \n",sizeof(short));
     
     if(sc->mode == SEAM_CARVER_UPDATE_MODE){
-        cudaMalloc((void**)&(sc->d_costs_swap.left), w*h*sizeof(int)); 
-        cudaMalloc((void**)&(sc->d_costs_swap.up), w*h*sizeof(int)); 
-        cudaMalloc((void**)&(sc->d_costs_swap.right), w*h*sizeof(int));
+        cudaMalloc((void**)&(sc->d_costs_swap.left), w*h*sizeof(short)); 
+        cudaMalloc((void**)&(sc->d_costs_swap.up), w*h*sizeof(short)); 
+        cudaMalloc((void**)&(sc->d_costs_swap.right), w*h*sizeof(short));
     }
     
     cudaMalloc((void**)&sc->d_M, w*h*sizeof(int)); 
