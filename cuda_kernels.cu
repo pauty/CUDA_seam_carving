@@ -205,7 +205,7 @@ __global__ void compute_M_kernel_step1(cost_data d_costs, int* d_M, int w, int h
     int max_row = base_row + COMPUTE_M_BLOCKSIZE_X/2;
     for(int row = base_row+1, inc = 1; row < max_row && row < h; row++, inc++){
         ix = ix + w;
-        if((is_first || inc <= threadIdx.x) && (is_last || threadIdx.x < COMPUTE_M_BLOCKSIZE_X - inc) && coloumn < current_w){
+        if(coloumn < current_w && (is_first || inc <= threadIdx.x) && (is_last || threadIdx.x < COMPUTE_M_BLOCKSIZE_X - inc)){
             //ix = row*w + coloumn;
             
             //with left
@@ -242,7 +242,7 @@ __global__ void compute_M_kernel_step2(cost_data d_costs, int* d_M, int w, int h
     int max_row = base_row + COMPUTE_M_BLOCKSIZE_X/2;
     for(int row = base_row+1, inc = 1; row < max_row && row < h; row++, inc++){
         ix = prev_ix + w;
-        if((COMPUTE_M_BLOCKSIZE_X/2 - inc <= threadIdx.x) && (threadIdx.x < COMPUTE_M_BLOCKSIZE_X/2 + inc) && coloumn < current_w){
+        if(coloumn < current_w && (COMPUTE_M_BLOCKSIZE_X/2 - inc <= threadIdx.x) && (threadIdx.x < COMPUTE_M_BLOCKSIZE_X/2 + inc)){
             //ix = row*w + coloumn;
             //prev_ix = ix - w;
                        
@@ -443,18 +443,19 @@ __global__ void min_reduce(int* d_values, int* d_indices, int size){
 
 
 __global__ void find_seam_kernel(int *d_M, int *d_indices, int *d_seam, int w, int h, int current_w){    
-    int mid;
+    int base_row, mid;
     int min_index = d_indices[0];
     
     d_seam[h-1] = min_index; 
     for(int row = h-2; row >= 0; row--){
+        base_row = row*w;
         mid = min_index;
         if(mid != 0){
-            if(d_M[row*w + mid - 1] < d_M[row*w + min_index])
+            if(d_M[base_row + mid - 1] < d_M[base_row + min_index])
                 min_index = mid - 1;
         }
         if(mid != current_w){
-            if(d_M[row*w + mid + 1] < d_M[row*w + min_index])
+            if(d_M[base_row + mid + 1] < d_M[base_row + min_index])
                 min_index = mid + 1;
         }
         d_seam[row] = min_index;
