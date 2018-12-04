@@ -206,7 +206,6 @@ __global__ void compute_M_kernel_step1(cost_data d_costs, int* d_M, int w, int h
     for(int row = base_row+1, inc = 1; row < max_row && row < h; row++, inc++){
         ix = ix + w;
         if(coloumn < current_w && (is_first || inc <= threadIdx.x) && (is_last || threadIdx.x < COMPUTE_M_BLOCKSIZE_X - inc)){
-            //ix = row*w + coloumn;
             
             //with left
             if(coloumn > 0)
@@ -231,7 +230,6 @@ __global__ void compute_M_kernel_step1(cost_data d_costs, int* d_M, int w, int h
         __syncthreads();                
     }
 }
-
 
 __global__ void compute_M_kernel_step2(cost_data d_costs, int* d_M, int w, int h, int current_w, int base_row){
     int coloumn = blockIdx.x*COMPUTE_M_BLOCKSIZE_X + threadIdx.x + COMPUTE_M_BLOCKSIZE_X/2; 
@@ -258,8 +256,6 @@ __global__ void compute_M_kernel_step2(cost_data d_costs, int* d_M, int w, int h
                 
             left = min(left, min(up, right));               
             d_M[ix] = left;
-            
-            //prev_ix = ix;
         }
         prev_ix = ix;
         __syncthreads();
@@ -397,7 +393,6 @@ __global__ void compute_M_kernel_iterate1(cost_data d_costs, int* d_M, int w, in
    } 
 }
 
-
 __global__ void min_reduce(int* d_values, int* d_indices, int size){
     __shared__ int val_cache[REDUCE_BLOCKSIZE_X];
     __shared__ int ix_cache[REDUCE_BLOCKSIZE_X];
@@ -409,7 +404,6 @@ __global__ void min_reduce(int* d_values, int* d_indices, int size){
     int new_i, new_v;
     
     for(int i = 0; i < REDUCE_ELEMENTS_PER_THREAD; i++){
-        //coloumn = base_coloumn + i*gridDim.x*REDUCE_BLOCKSIZE_X;
         if(coloumn < size){
             new_i = d_indices[coloumn];
             new_v  = d_values[new_i];
@@ -437,10 +431,8 @@ __global__ void min_reduce(int* d_values, int* d_indices, int size){
     
     if(tid == 0){
         d_indices[blockIdx.x] = ix_cache[0];  
-        //printf("%d : %d \n", ix_cache[0], val_cache[0]);
     }  
 }
-
 
 __global__ void find_seam_kernel(int *d_M, int *d_indices, int *d_seam, int w, int h, int current_w){    
     int base_row, mid;
@@ -548,48 +540,6 @@ __global__ void update_costs_kernel(uchar4 *d_pixels, cost_data d_costs, cost_da
     }
 }
 
-/*
-////OLD VERSION THAT USES COSTS
-
-__global__ void approx_setup_kernel(cost_data d_costs, int *d_index_map, int *d_offset_map, int *d_M, int w, int h, int current_w){
-    int row = blockIdx.y*APPROX_SETUP_BLOCKSIZE_Y + threadIdx.y;
-    int coloumn = blockIdx.x*APPROX_SETUP_BLOCKSIZE_X + threadIdx.x;
-    int ix = row*w + coloumn;
-    
-    if(row < h-1 && coloumn < current_w){
-        int min_cost = INT_MAX;
-        int map_ix;
-        int cost, ixx;
-       
-        if(coloumn > 0){
-            ixx = ix + w - 1;
-            min_cost = d_costs.right[ixx];
-            map_ix = ixx;
-        }
-        
-        ixx = ix + w;
-        cost = d_costs.up[ixx];
-        if(cost < min_cost){
-            min_cost = cost;
-            map_ix = ixx;
-        }
-        
-        if(coloumn < current_w-1){
-            ixx = ix + w + 1;
-            cost = d_costs.left[ixx];
-            if(cost < min_cost){
-                min_cost = cost;
-                map_ix = ixx;
-            }
-        }
-        
-        d_index_map[ix] = map_ix;
-        d_offset_map[ix] = map_ix;
-        d_M[ix] = min_cost;           
-    }
-}*/
-
-
 __global__ void approx_setup_kernel(uchar4 *d_pixels, int *d_index_map, int *d_offset_map, int *d_M, int w, int h, int current_w){
     __shared__ pixel pix_cache[APPROX_SETUP_BLOCKSIZE_Y][APPROX_SETUP_BLOCKSIZE_X];
     __shared__ short left_cache[APPROX_SETUP_BLOCKSIZE_Y][APPROX_SETUP_BLOCKSIZE_X];
@@ -681,8 +631,6 @@ __global__ void approx_setup_kernel(uchar4 *d_pixels, int *d_index_map, int *d_o
     }
 } 
 
-
-
 __global__ void approx_M_kernel(int *d_offset_map, int *d_M, int w, int h, int current_w, int step){
         int row = blockIdx.y*2*step;
         int next_row = row + step;
@@ -705,7 +653,6 @@ __global__ void approx_seam_kernel(int *d_index_map, int *d_indices, int *d_seam
             ix = d_index_map[ix];
     }
 }
-
 
 /*############### end of kernels #################*/
 
@@ -834,17 +781,6 @@ void update_costs(seam_carver sc){
     update_costs_kernel<<<num_blocks, threads_per_block>>>(sc.d_pixels, sc.d_costs, sc.d_costs_swap, sc.d_seam, sc.w, sc.h, sc.current_w);
 }
 
-
-/*
-void approx_setup(seam_carver sc){
-    dim3 threads_per_block(APPROX_SETUP_BLOCKSIZE_X, APPROX_SETUP_BLOCKSIZE_Y);
-    dim3 num_blocks;
-    num_blocks.x = (int)((sc.current_w-1)/(threads_per_block.x)) + 1;
-    num_blocks.y = (int)((sc.h-2)/(threads_per_block.y)) + 1;    
-    approx_setup_kernel<<<num_blocks, threads_per_block>>>(sc.d_costs, sc.d_index_map, sc.d_offset_map, sc.d_M, sc.w, sc.h, sc.current_w);
-}*/
-
-
 void approx_setup(seam_carver sc){
     dim3 threads_per_block(APPROX_SETUP_BLOCKSIZE_X, APPROX_SETUP_BLOCKSIZE_Y);
     dim3 num_blocks;
@@ -852,8 +788,6 @@ void approx_setup(seam_carver sc){
     num_blocks.y = (int)((sc.h-2)/(threads_per_block.y-1)) + 1;    
     approx_setup_kernel<<<num_blocks, threads_per_block>>>(sc.d_pixels, sc.d_index_map, sc.d_offset_map, sc.d_M, sc.w, sc.h, sc.current_w);
 }
-
-
 
 void approx_M(seam_carver sc){
     dim3 threads_per_block(APPROX_M_BLOCKSIZE_X, 1);

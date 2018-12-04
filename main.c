@@ -7,12 +7,6 @@
 // CUDA runtime
 //#include <cuda_runtime.h>
 
-/*
-// Helper functions and utilities to work with CUDA
-#include <helper_functions.h>
-#include <helper_cuda.h>
-*/
-
 #include "seam_carver.h"
 
 //#define STBI_ONLY_BMP

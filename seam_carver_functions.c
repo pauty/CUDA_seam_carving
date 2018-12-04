@@ -19,7 +19,6 @@ uchar4 *build_pixels(const unsigned char *imgv, int w, int h){
     return pixels;
 }
 
-
 unsigned char *flatten_pixels(uchar4 *pixels, int w, int h, int new_w){
     unsigned char *flattened = (unsigned char*)malloc(3*new_w*h*sizeof(unsigned char));
     int i, j;
@@ -35,7 +34,6 @@ unsigned char *flatten_pixels(uchar4 *pixels, int w, int h, int new_w){
     return flattened;
 }
 
-//INIT
 void seam_carver_init(seam_carver *sc, seam_carver_mode mode, unsigned char* imgv, int w, int h){
     sc->w = w;
     sc->h = h;
@@ -82,7 +80,6 @@ void seam_carver_init(seam_carver *sc, seam_carver_mode mode, unsigned char* img
     cudaMalloc((void**)&sc->d_seam, h*sizeof(int));    
 }
 
-//RESIZE
 void seam_carver_resize(seam_carver *sc, int seams_to_remove){
     uchar4* pixels_tmp;
     cost_data costs_tmp;
@@ -104,7 +101,7 @@ void seam_carver_resize(seam_carver *sc, int seams_to_remove){
     num_iterations = 0;
     while(num_iterations < seams_to_remove){
         
-        if(sc->mode == SEAM_CARVER_STANDARD_MODE){ //|| sc->mode == SEAM_CARVER_APPROX_MODE){ /////
+        if(sc->mode == SEAM_CARVER_STANDARD_MODE){
             compute_costs(*sc);
         }
         
@@ -143,7 +140,6 @@ void seam_carver_resize(seam_carver *sc, int seams_to_remove){
     free(indices);
 }
 
-//DESTROY
 void seam_carver_destroy(seam_carver *sc){
     cudaFree(sc->d_pixels);
     cudaFree(sc->d_pixels_swap);
